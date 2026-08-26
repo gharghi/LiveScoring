@@ -1,0 +1,100 @@
+{
+  "taskType": "CLASSIC",
+  "version": 1,
+  "turnpoints": [
+    {
+      "radius": 100,
+      "waypoint": {
+        "name": "D18",
+        "lat": 45.79558,
+        "lon": 11.66892,
+        "altSmoothed": 837.0
+      }
+    },
+    {
+      "radius": 3000,
+      "waypoint": {
+        "name": "B50",
+        "lat": 45.76928,
+        "lon": 11.73828,
+        "altSmoothed": 134.0
+      },
+      "type": "SSS"
+    },
+    {
+      "radius": 2000,
+      "waypoint": {
+        "name": "B50",
+        "lat": 45.76928,
+        "lon": 11.73828,
+        "altSmoothed": 134.0
+      }
+    },
+    {
+      "radius": 2000,
+      "waypoint": {
+        "name": "D05",
+        "lat": 45.8809,
+        "lon": 11.8434,
+        "altSmoothed": 1455.0
+      }
+    },
+    {
+      "radius": 4000,
+      "waypoint": {
+        "name": "B62",
+        "lat": 45.81682,
+        "lon": 11.878,
+        "altSmoothed": 182.0
+      }
+    },
+    {
+      "radius": 1000,
+      "waypoint": {
+        "name": "B01",
+        "lat": 45.74558,
+        "lon": 11.65533,
+        "altSmoothed": 100.0
+      }
+    },
+    {
+      "radius": 7500,
+      "waypoint": {
+        "name": "D12",
+        "lat": 45.79978,
+        "lon": 11.54438,
+        "altSmoothed": 1182.0
+      }
+    },
+    {
+      "radius": 1000,
+      "waypoint": {
+        "name": "B10",
+        "lat": 45.83358,
+        "lon": 11.8432,
+        "altSmoothed": 315.0
+      }
+    },
+    {
+      "radius": 200,
+      "waypoint": {
+        "name": "A02",
+        "lat": 45.80568,
+        "lon": 11.78655,
+        "altSmoothed": 156.0
+      }
+    }
+  ],
+  "takeoff": {},
+  "sss": {
+    "type": "RACE",
+    "direction": "EXIT",
+    "timeGates": [
+      "23:00:00Z"
+    ]
+  },
+  "goal": {
+    "type": "CYLINDER",
+    "deadline": "17:00:00Z"
+  }
+}

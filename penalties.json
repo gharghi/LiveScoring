@@ -1,0 +1,29 @@
+{
+  "_README": [
+    "S7F 13.5 penalties. Decided by the meet director and the jury; they are",
+    "an INPUT to scoring, not derived from any tracklog, so they live here.",
+    "",
+    "Keyed by task name. Each entry names a pilot by the ID that is also the",
+    "IGC filename (0157, or 0157.igc), or by pilot name, and gives one or more",
+    "of:",
+    "    percent_own    % of that pilot's own total for this task",
+    "    percent_task   % of the task's available points (1000 x taskValidity)",
+    "    points         a flat deduction",
+    "",
+    "'reason' is REQUIRED on every entry. A deduction a pilot cannot see the",
+    "reason for is a deduction they cannot contest.",
+    "",
+    "Pass with --penalties penalties.json. Unmatched pilots are reported, never",
+    "silently skipped.",
+    "",
+    "The entry below is from the published result for Bassano T2.3."
+  ],
+
+  "Task": [
+    {
+      "pilot": "1380",
+      "percent_own": 100,
+      "reason": "AIRSPACE"
+    }
+  ]
+}

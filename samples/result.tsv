@@ -1,0 +1,164 @@
+#	Id	Name	G	Nat	Glider	Tracklog	Quality	Distance
+[km]	SSS	ESS	Time	Speed
+[km/h]	Status	AAGL
+[m]	Dist.
+points	Lead.
+points	Time
+points	Total
+points
+1	18	Hakan Lindqvist	M	SWE	Ozone Lyght	
+IGC  VIEW
+76.37	13:00:00	15:24:02	02:24:02	29.71	GOAL	230	508.9	125.1	363.4	997.4
+2	50	[Daniel Gonzalez Rizo]	M	ESP	BGD Cure 2	
+IGC  VIEW
+76.37	13:00:00	15:24:47	+00:00:45	29.56	GOAL	70	508.9	127.7	356.9	993.5
+3	42	Rafael Rosa Prat	M	ESP	Ozone Photon	
+IGC  VIEW
+76.37	13:00:00	15:24:13	+00:00:11	29.67	GOAL	77	508.9	122.3	361.4	992.6
+4	5	Alejandro Martin Acuña	M	ESP	Niviuk Artik 7P	
+IGC  VIEW
+76.37	13:00:00	15:25:27	+00:01:25	29.42	GOAL	237	508.9	125.6	352.3	986.8
+5	25	Jose Abad	M	ESP	BGD Cure 3	
+IGC  VIEW
+76.37	13:00:00	15:27:13	+00:03:11	29.07	GOAL	199	508.9	126.0	341.6	976.5
+6	26	Juan Manuel Garcia Guerrero	M	ESP	Advance TAU	
+IGC  VIEW
+76.37	13:00:00	15:26:36	+00:02:34	29.19	GOAL	298	508.9	122.3	345.2	976.4
+7	41	Rafa Ubeda Bañon	M	ESP	PHI SCALA 2	
+IGC  VIEW
+76.37	13:00:00	15:27:26	+00:03:24	29.03	GOAL	130	508.9	124.6	340.4	973.8
+8	48	Xavi Liria	M	ESP	Ozone Delta 5	
+IGC  VIEW
+76.37	13:00:00	15:28:00	+00:03:58	28.92	GOAL	337	508.9	114.6	337.2	960.7
+9	37	Paco Navarro Gonzalez	M	ESP	GIN GTO 3	
+IGC  VIEW
+76.37	13:00:00	15:24:55	+00:00:53	29.53	GOAL	404	508.9	95.2	355.9	960.0
+10	51	Deonir Spancerski	M	BRA	Ozone Photon	
+IGC  VIEW
+76.37	13:00:00	15:33:44	+00:09:42	27.84	GOAL	583	508.9	117.8	308.2	934.8
+11	54	Oskar Benito Gomez	M	ESP	Advance TAU	
+IGC  VIEW
+76.37	13:00:00	15:30:20	+00:06:18	28.47	GOAL	423	508.9	85.1	324.9	918.8
+12	36	Miguel Villarta	M	ESP	Niviuk Niviuk ARTIK R	
+IGC  VIEW
+76.37	13:00:00	15:31:11	+00:07:09	28.31	GOAL	249	508.9	85.4	320.6	914.9
+13	20	Jordi Massallé Josa	M	ESP	Ozone Alpina 4	
+IGC  VIEW
+76.37	13:00:00	15:45:00	+00:20:58	25.94	GOAL	93	508.9	90.2	258.4	857.4
+14	21	James Gibson	M	NZL	Ozone delta 5	
+IGC  VIEW
+76.37	13:00:00	15:51:49	+00:27:47	24.91	GOAL	580	508.9	99.8	230.6	839.3
+15	14	Ferran Granollers Relats	M	ESP	Skywalk Sage	
+IGC  VIEW
+76.37	13:00:00	15:54:54	+00:30:52	24.47	GOAL	148	508.9	104.1	218.4	831.4
+16	6	Alejo Louro Noguera	M	ESP	Advance TAU ULS	
+IGC  VIEW
+76.37	13:00:00	16:03:57	+00:39:55	23.27	GOAL	100	508.9	86.7	183.8	779.3
+17	11	Eduardo Lindo Mimoso	M	ESP	GIN GTO 3	
+IGC  VIEW
+76.37	13:00:00	16:07:59	+00:43:57	22.77	GOAL	607	508.9	86.7	168.8	764.3
+18	15	Gerardo Campos Bagan	M	ESP	Ozone Photon	
+IGC  VIEW
+65.56	13:00:00				DF	LD	436.8	92.2		529.0
+19	46	Victor Oltra Barrasa	M	ESP	Macpara Elixir	
+IGC  VIEW
+59.17	13:00:00				DF	LD	394.3	79.9		474.2
+20	29	Luis Pol Bernal	M	ESP	GIN GTO 3	
+IGC  VIEW
+58.10	13:00:00				DF	LD	387.2	81.1		468.2
+21	53	Librizzi Roberto	M	ITA	GIN GTO 3	
+IGC  VIEW
+56.83	13:00:00				DF	LD	378.6	71.8		450.4
+22	17	Greg Ellis	M	NZL	Ozone Photon	
+IGC  VIEW
+55.62	13:00:00				DF	LD	370.6	72.8		443.4
+23	24	Jerry Lombard	M	RSA	Ozone Delta 5	
+IGC  VIEW
+55.32	13:00:00				DF	LD	368.6	61.4		430.0
+24	34	María Álvarez Fraga	F	ESP	Advance Advance Tau DLS	
+IGC  VIEW
+54.57	13:00:00				DF	LD	363.6	65.1		428.7
+25	23	Javier Keniata Ruiz-Larrea De Tuero	M	ESP	Ozone Photon XL	
+IGC  VIEW
+54.59	13:00:00				DF	LD	363.8	57.4		421.1
+26	12	Emmanuel Betancourt Tobon	M	ESP	Ozone Photon	
+IGC  VIEW
+53.77	13:00:00				DF	LD	358.3	60.8		419.1
+27	3	Alberto Cachafeiro Sánchez	M	ESP	Ozone Delta 5	
+IGC  VIEW
+51.23	13:00:00				DF	LD	341.4	51.0		392.3
+28	47	Wang Quanguo	M	CHN	Ozone Lyght	
+IGC  VIEW
+52.88	13:00:00				DF	LD	352.4	35.8		388.1
+29	9	Carlos Muñoz Torrente	M	ESP	MacPara Verve	
+IGC  VIEW
+50.49	13:00:00				DF	LD	336.4	50.0		386.4
+30	10	Dirk De Troch	M	BEL	MACPARA ELIXIR	
+IGC  VIEW
+52.40	13:00:00				DF	LD	349.2	30.4		379.6
+31	58	Josep Ferreiro	M	ESP	MacPara Elan 2	
+IGC  VIEW
+51.29	13:00:00				DF	LD	341.7	33.1		374.9
+32	2	Aitor Echevarria Quintana	M	ESP	GIN GTO 3	
+IGC  VIEW
+50.12	13:00:00				DF	LD	333.9	40.4		374.4
+33	22	Javier Gomez De Segura	M	ESP	Ozone rush 6	
+IGC  VIEW
+51.16	13:00:00				DF	LD	340.9	15.4		356.2
+34	28	Lee-Anne Lombard	F	RSA	Flow Freedom 2	
+IGC  VIEW
+51.10	13:00:00				DF	LD	340.5			340.5
+35	1	Adrian Ripoll Torres	M	ESP	AirDesign Volt 5	
+IGC  VIEW
+49.23	13:00:00				DF	LD	328.0	12.1		340.1
+36	30	Luis Miguel Diez Garcia	M	ESP	GIN Bonanza 3	
+IGC  VIEW
+49.02	13:00:00				DF	LD	326.6	5.0		331.6
+37	44	Thomas Milko	M	BRA	BGD Cure 3	
+IGC  VIEW
+40.30	13:00:00				DF	LD	268.5	6.2		274.8
+38	8	Augusto Clemente Ramírez	M	ESP	GIN GTO 3	
+IGC  VIEW
+39.67	13:00:00				DF	LD	264.3	2.8		267.1
+39	57	Óliver Álvarez Lorenzo	M	ESP	GIN GTO 3	
+IGC  VIEW
+39.12	13:00:00				DF	LD	260.6	3.7		264.4
+40	13	Fermin Montaner Morant	M	ESP	GIN GTO 3	
+IGC  VIEW
+35.70	13:00:00				DF	LD	237.9			237.9
+41	4	Alberto Restifo	M	ESP	Up Torre	
+IGC  VIEW
+27.10	13:00:00				DF	LD	180.6			180.6
+42	35	Mateu Bendicho	M	ESP	MacPara Verve	
+IGC  VIEW
+7.16	13:00:00				DF	LD	47.7			47.7
+43	16	Fouad Karam	M	LBN	Niviuk ikima 3	
+IGC  VIEW
+7.00	13:00:00				DF		46.7			46.7
+44	39	Pere Valles	M	ESP	Niviuk Artik R2	
+IGC  VIEW
+5.95	13:00:00				DF	LD	39.7			39.7
+45	38	Pauline Crombette	F	FRA	Ozone SwiftSix	
+IGC  VIEW
+5.95	13:00:00				DF	LD	39.6			39.6
+46	40	Pierre Garin	M	BEL	Advance SIGMA 12 DLS	
+IGC  VIEW
+5.62	13:00:00				DF	LD	37.4			37.4
+47	27	Laia Luz	F	ESP	Niviuk Ikuma 3	
+IGC  VIEW
+5.39	13:00:00				DF	LD	35.9			35.9
+48	55	Xiaohui Wei	M	CHN	SKY Merlin	
+IGC  VIEW
+5.20	13:00:00				DF	LD	34.6			34.6
+49	33	Martí Cols Camprubí	M	ESP	Sky Paragliders Exos	
+IGC  VIEW
+5.00					MIND	LD	33.3			33.3
+49	49	Xavier Segura Jobal	M	ESP	GIN GTO 3	
+IGC  VIEW
+5.00	13:00:00				MIND	LD	33.3			33.3
+51	7	Alexander Gunde	M	GER	Ozone Delta 5			0.00					ABS					0.0
+51	59	David Contreras Lazaro	M	ESP	ozone Photon			0.00					ABS					0.0
+51	19	Ignacio Luzuriaga	M	ESP	Niviuk Artik R2			0.00					ABS					0.0
+51	31	Joaquín Casillas Martin	M	ESP	Niviuk ikuma 3			0.00					ABS					0.0
+51	52	Jose Luis Martinez Novoa	M	ESP	Ozone Photon			0.00					ABS					0.0
+51	45	Victor Aguilera Lozano	M	ESP	GIN GTO 3			0.00					ABS					0.0

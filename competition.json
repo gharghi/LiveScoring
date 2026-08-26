@@ -1,0 +1,65 @@
+{
+  "_README": [
+    "Competition configuration for the live scoring engine.",
+    "Rules: FAI Sporting Code Section 7F, 2026 edition V1.0.",
+    "",
+    "The three values under 'S7F 5' MUST be set by the meet director before",
+    "the first task. They are not in the .xctsk file and every task-validity",
+    "number is meaningless if they are wrong. The values below are PLACEHOLDERS",
+    "-- replace them with this competition's real parameters."
+  ],
+
+  "name": "Cto. de Espana Cat. Sport 2026",
+  "class": "Sport",
+  "discipline": "paragliding",
+
+  "_s7f_5": "Competition parameters. Delete a name from 'placeholders' below once it is real.",
+  "placeholders": ["nominal_distance_km", "minimum_distance_km", "nominal_time_min"],
+
+  "nominal_distance_km": 60.0,
+  "minimum_distance_km": 5.0,
+  "nominal_time_min": 90.0,
+
+  "_launch_validity": "Pilots present at take-off (S7F 10.1). null = count tracklogs.",
+  "pilots_present": null,
+
+  "_s7f_11": "LeadingTimeRatio: 0..26%. Paragliding default 26%, hang-gliding 17.5%.",
+  "leading_time_ratio": 0.26,
+
+  "_s7f_13_2": "Time points for reaching ESS but not goal. Paragliding: 0. Hang-gliding: 0.8.",
+  "ess_no_goal_time_factor": 0.0,
+
+  "_s7f_13_4": "Stopped-task score-back, minutes. Paragliding 5, hang-gliding 15. Not yet applied.",
+  "score_back_min": 5.0,
+
+  "_altitude": "Which altitude scores goal crossings (S7F 13.1): 'gps' or 'baro'.",
+  "altitude_source": "gps",
+
+  "_fixed": "Fixed by S7F but exposed so a rule change does not need a code change.",
+  "nominal_goal": 0.30,
+  "nominal_launch": 0.96,
+
+  "_tasks": [
+    "Per-task overrides keyed by task name. S7F 11 sets LeadingTimeRatio per",
+    "task; S7F 13.1 sets elevated_goal_m when goal is on high ground.",
+    "",
+    "The 'Task' entry below is READ BACK FROM THE PUBLISHED RESULT for Bassano",
+    "T2.3, not taken from a task file, because neither value is in the .xctsk:",
+    "",
+    "  leading_time_ratio 0.2632 -- the official points allocation is",
+    "    distance 361.7 / leading 168.0 / time 470.3, and leading/(leading+time)",
+    "    is 0.2632 whatever the goal ratio was. S7F 11 gives 26% for",
+    "    paragliding, so CONFIRM THIS WITH THE MEET DIRECTOR.",
+    "",
+    "  elevated_goal_m 200 -- the official Low P column is the S7F 13.1",
+    "    reduction, and inverting the published curve gives an elevation band",
+    "    of 200 m, not the 300 m default. Three independent pilots agree",
+    "    (heights 150 m, 18 m and 6 m all invert to 200)."
+  ],
+  "tasks": {
+    "Task": {
+      "leading_time_ratio": 0.2632,
+      "elevated_goal_m": 200
+    }
+  }
+}
