@@ -48,6 +48,10 @@ The corresponding diagram is [live-scoring-architecture.drawio](live-scoring-arc
 
 ## Frontend API and SQLite snapshots
 
+> Production API note: the deployed service is now the Django/PostgreSQL API
+> described in [DJANGO_API.md](DJANGO_API.md). The FastAPI/SQLite service below
+> remains a local replay/demo tool.
+
 The FastAPI delivery service tails the same canonical event log, recalculates
 the current board, and persists a `live-score.v1` snapshot in SQLite every
 second. Install its two runtime dependencies once:

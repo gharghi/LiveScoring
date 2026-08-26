@@ -1,5 +1,5 @@
 [Unit]
-Description=LiveScoring FastAPI API
+Description=LiveScoring Django API
 After=network.target
 
 [Service]
@@ -9,7 +9,8 @@ Group=livescoring
 WorkingDirectory=/srv/livescoring
 Environment=LIVE_SCORING_EVENTS=/srv/livescoring/runtime/events.jsonl
 Environment=LIVE_SCORING_DB=/srv/livescoring/runtime/live-scoring.sqlite3
-ExecStart=/srv/livescoring/venv/bin/python -m uvicorn api_app:app --host 127.0.0.1 --port 8100 --workers 1
+EnvironmentFile=/etc/livescoring.env
+ExecStart=/srv/livescoring/venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8100 --access-logfile - --error-logfile - live_django.wsgi:application
 Restart=always
 RestartSec=5
 NoNewPrivileges=true
