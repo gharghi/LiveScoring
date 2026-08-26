@@ -1,7 +1,9 @@
+from django.contrib import admin
 from django.urls import path
 from live_api import views
 
 urlpatterns = [
+    path("admin/", admin.site.urls),
     path("health", views.health),
     path("openapi.json", views.openapi),
     path("api/v1/api-keys", views.api_keys),

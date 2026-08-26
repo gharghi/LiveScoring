@@ -1,0 +1,6 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<h1>Generate API key for {{ application.name }}</h1>
+<p>This rotates the existing key. The previous key stops working immediately.</p>
+<form method="post">{% csrf_token %}<button type="submit" class="default">Generate key</button></form>
+{% endblock %}

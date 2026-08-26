@@ -3,6 +3,14 @@
 The production API is Django-backed and uses PostgreSQL. All protected
 requests send `X-API-Key: <key>` (Bearer tokens are also accepted).
 
+## Django admin
+
+Open `https://ls.buildmycabin.com/admin/` and sign in with a Django staff
+account. Under **Live API → API applications**, add an application and save it,
+then use **Generate / rotate key**. The plaintext key is shown once; copy it
+to the tracker immediately. Rotating a key invalidates the previous key. The
+database stores only a hash of each key.
+
 ## 1. Create an application key
 
 ```http

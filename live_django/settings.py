@@ -10,8 +10,33 @@ WSGI_APPLICATION = "live_django.wsgi.application"
 USE_TZ = True
 TIME_ZONE = "UTC"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-INSTALLED_APPS = ["django.contrib.contenttypes", "live_api"]
-MIDDLEWARE = ["django.middleware.security.SecurityMiddleware", "django.middleware.common.CommonMiddleware"]
+INSTALLED_APPS = [
+    "django.contrib.admin", "django.contrib.auth", "django.contrib.contenttypes",
+    "django.contrib.sessions", "django.contrib.messages", "django.contrib.staticfiles",
+    "live_api",
+]
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware", "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware", "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware", "django.contrib.messages.middleware.MessageMiddleware",
+]
+TEMPLATES = [{
+    "BACKEND": "django.template.backends.django.DjangoTemplates",
+    "DIRS": [BASE_DIR / "templates"], "APP_DIRS": True,
+    "OPTIONS": {"context_processors": [
+        "django.template.context_processors.request", "django.contrib.auth.context_processors.auth",
+        "django.contrib.messages.context_processors.messages",
+    ]},
+}]
+STATIC_URL = "/static/"
+
+# Nginx terminates TLS in production. Preserve HTTPS semantics for Django's
+# secure cookies and CSRF checks while keeping local development convenient.
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    CSRF_TRUSTED_ORIGINS = ["https://ls.buildmycabin.com"]
 
 if os.environ.get("POSTGRES_DB"):
     DATABASES = {"default": {

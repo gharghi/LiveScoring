@@ -1,0 +1,7 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<h1>API key generated</h1>
+<p>Copy this key now. It will not be displayed again:</p>
+<pre style="font-size:1.25rem;padding:1rem;background:#f5f5f5;user-select:all">{{ plain_key }}</pre>
+<p><a href="{% url 'admin:live_api_apiapplication_changelist' %}">Return to API applications</a></p>
+{% endblock %}
