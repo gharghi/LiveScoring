@@ -1,0 +1,22 @@
+[Unit]
+Description=LiveScoring FastAPI API
+After=network.target
+
+[Service]
+Type=simple
+User=livescoring
+Group=livescoring
+WorkingDirectory=/srv/livescoring
+Environment=LIVE_SCORING_EVENTS=/srv/livescoring/runtime/events.jsonl
+Environment=LIVE_SCORING_DB=/srv/livescoring/runtime/live-scoring.sqlite3
+ExecStart=/srv/livescoring/venv/bin/python -m uvicorn api_app:app --host 127.0.0.1 --port 8100 --workers 1
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/srv/livescoring/runtime /tmp/live-scoring-api
+
+[Install]
+WantedBy=multi-user.target
