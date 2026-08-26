@@ -254,8 +254,12 @@ def manga_points(request, manga_id):
 
 # English terminology for new integrations. The manga routes remain available
 # as compatibility aliases for already deployed Volandoo clients.
-task_sync = manga_sync
-task_points = manga_points
+def task_sync(request, event_id):
+    return manga_sync(request, event_id)
+
+
+def task_points(request, task_id):
+    return manga_points(request, manga_id=task_id)
 
 
 @csrf_exempt
