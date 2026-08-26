@@ -262,10 +262,17 @@ def manga_points(request, manga_id):
 
 # English terminology for new integrations. The manga routes remain available
 # as compatibility aliases for already deployed Volandoo clients.
+#
+# csrf_exempt is required on the ALIASES too, not just on the targets: Django
+# applies CSRF at the view the URLconf resolves to, so without it these two
+# returned 403 to every non-browser client while /mangas/... worked, which
+# reads exactly like an auth failure and is not one.
+@csrf_exempt
 def task_sync(request, event_id):
     return manga_sync(request, event_id)
 
 
+@csrf_exempt
 def task_points(request, task_id):
     return manga_points(request, manga_id=task_id)
 
