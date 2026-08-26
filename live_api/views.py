@@ -89,8 +89,8 @@ def openapi(request):
             "category_id": {"type": "string"}, "tracker_id": {"type": "string"},
             "competition_number": {"type": "string"}, "country": {"type": "string"},
             "glider": {"type": "string"}, "metadata": {"type": "object"}}},
-        "TrackingPoint": {"type": "object", "required": ["pilot_id", "timestamp", "lat", "lon", "alt"], "properties": {
-            "pilot_id": {"type": "string"}, "timestamp": {"type": "integer", "format": "int64", "description": "Unix epoch seconds of GPS fix"},
+        "TrackingPoint": {"type": "object", "required": ["pilot_id", "epoch", "lat", "lon", "alt"], "properties": {
+            "pilot_id": {"type": "string"}, "epoch": {"type": "integer", "format": "int64", "description": "Unix epoch seconds; sender signature and GPS fix time."}, "timestamp": {"type": "integer", "format": "int64", "description": "Backward-compatible alias for epoch."},
             "lat": {"type": "number", "minimum": -90, "maximum": 90}, "lon": {"type": "number", "minimum": -180, "maximum": 180}, "alt": {"type": "number"}, "event_id": {"type": "string"}}},
         "Classification": {"type": "object", "properties": {"computed_at_epoch": {"type": "integer", "format": "int64"}, "ranking": {"type": "array", "items": {"type": "object", "properties": {"pilot_id": {"type": "string"}, "category_id": {"type": "string"}, "rank": {"type": "integer"}, "score": {"type": "number"}}}}}},
     }
@@ -108,9 +108,9 @@ def openapi(request):
     paths = {
         "/events/sync": {"post": {"tags": ["Event sync"], "security": [{"ApiKeyAuth": []}], "summary": "Upsert event, formula, categories and pilot roster", "requestBody": {"required": True, "content": {"application/json": {"schema": event_body}}}, "responses": {"200": {"description": "{event_id,status,errors}"}, "400": {"description": "Validation errors"}}}},
         "/events/{event_id}/mangas/sync": {"post": {"tags": ["Manga sync"], "security": [{"ApiKeyAuth": []}], "summary": "Upsert a stable manga/day configuration", "parameters": [{"in": "path", "name": "event_id", "required": True, "schema": {"type": "string"}}], "requestBody": {"required": True, "content": {"application/json": {"schema": manga_body}}}, "responses": {"200": {"description": "{event_id,manga_id,status,errors}"}, "400": {"description": "Validation errors"}, "404": {"description": "Unknown event"}}}},
-        "/mangas/{manga_id}/points": {"post": {"tags": ["Live tracking"], "security": [{"ApiKeyAuth": []}], "summary": "Push points and receive classification (legacy manga name)", "description": "Send every ~15 seconds. Deduplication key is (pilot_id,timestamp). Late, out-of-order, duplicate and missing points are accepted. cutoff_epoch is a cache watermark and is echoed as received_cutoff_epoch.", "parameters": [{"in": "path", "name": "manga_id", "required": True, "schema": {"type": "string"}}], "requestBody": {"required": True, "content": {"application/json": {"schema": points_body}}}, "responses": {"200": {"description": "Ack and classification", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Classification"}}}}, "400": {"description": "Invalid points"}, "404": {"description": "Unknown task"}}}},
+        "/mangas/{manga_id}/points": {"post": {"tags": ["Live tracking"], "security": [{"ApiKeyAuth": []}], "summary": "Push points and receive classification (legacy manga name)", "description": "Send every ~15 seconds. Deduplication key is (pilot_id,epoch). Late, out-of-order, duplicate and missing points are accepted. cutoff_epoch is a cache watermark and is echoed as received_cutoff_epoch. processed_epoch confirms the highest epoch successfully handled.", "parameters": [{"in": "path", "name": "manga_id", "required": True, "schema": {"type": "string"}}], "requestBody": {"required": True, "content": {"application/json": {"schema": points_body}}}, "responses": {"200": {"description": "Ack and classification"}, "400": {"description": "Invalid points"}, "404": {"description": "Unknown task"}}}},
         "/events/{event_id}/tasks/sync": {"post": {"tags": ["Task sync"], "security": [{"ApiKeyAuth": []}], "summary": "Upsert a stable task/day configuration", "parameters": [{"in": "path", "name": "event_id", "required": True, "schema": {"type": "string"}}], "requestBody": {"required": True, "content": {"application/json": {"schema": task_body}}}, "responses": {"200": {"description": "Task accepted"}, "400": {"description": "Validation errors"}, "404": {"description": "Unknown event"}}}},
-        "/tasks/{task_id}/points": {"post": {"tags": ["Live tracking"], "security": [{"ApiKeyAuth": []}], "summary": "Push task tracking points and calculate immediately", "parameters": [{"in": "path", "name": "task_id", "required": True, "schema": {"type": "string"}}], "requestBody": {"required": True, "content": {"application/json": {"schema": points_body}}}, "responses": {"200": {"description": "Ingestion acknowledgement and latest classification"}, "404": {"description": "Unknown task"}}}},
+        "/tasks/{task_id}/points": {"post": {"tags": ["Live tracking"], "security": [{"ApiKeyAuth": []}], "summary": "Push task tracking points and calculate immediately", "description": "Each point must include epoch (Unix seconds). The response returns processed_epoch, the highest point epoch successfully accepted or recognized as a duplicate.", "parameters": [{"in": "path", "name": "task_id", "required": True, "schema": {"type": "string"}}], "requestBody": {"required": True, "content": {"application/json": {"schema": points_body}}}, "responses": {"200": {"description": "Ingestion acknowledgement and latest classification, including received_cutoff_epoch and processed_epoch"}, "404": {"description": "Unknown task"}}}},
         "/tasks/{task_id}/results": {"get": {"tags": ["Results"], "security": [{"ApiKeyAuth": []}], "summary": "Get the latest calculated task results", "parameters": [{"in": "path", "name": "task_id", "required": True, "schema": {"type": "string"}}], "responses": {"200": {"description": "Current ranking and per-pilot scoring fields", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Classification"}}}}, "404": {"description": "Unknown task"}}}},
         "/events/{event_id}/results": {"get": {"tags": ["Results"], "security": [{"ApiKeyAuth": []}], "summary": "Get the latest task results for an event", "parameters": [{"in": "path", "name": "event_id", "required": True, "schema": {"type": "string"}}], "responses": {"200": {"description": "Current ranking"}, "404": {"description": "Unknown event"}}}},
     }
@@ -221,32 +221,40 @@ def manga_points(request, manga_id):
     if data.get("event_id") and data["event_id"] != task.competition.external_event_id:
         return error("event_id does not match manga", 400)
     accepted = duplicates = 0
+    processed_epochs = []
     with transaction.atomic():
         for point in points:
             try:
                 pilot = str(point["pilot_id"])
-                timestamp = _epoch_datetime(point["timestamp"])
+                # ``epoch`` is the sender's GPS-fix signature. ``timestamp``
+                # remains accepted for clients using the original contract.
+                epoch = point.get("epoch", point.get("timestamp"))
+                timestamp = _epoch_datetime(epoch)
                 lat, lon = float(point["lat"]), float(point["lon"])
                 if not (-90 <= lat <= 90 and -180 <= lon <= 180):
                     raise ValueError
             except (KeyError, TypeError, ValueError, OverflowError):
-                return error("each point requires pilot_id, epoch timestamp, lat and lon")
+                return error("each point requires pilot_id, epoch (or timestamp), lat and lon")
             # Integration identity is (pilot_id, GPS timestamp), independent of
             # arrival batch, coordinates, cutoff watermark, or event_id.
             if TrackingPoint.objects.filter(competition=task.competition, pilot_id=pilot, timestamp=timestamp).exists():
                 duplicates += 1
+                processed_epochs.append(int(timestamp.timestamp()))
                 continue
             fp = TrackingPoint.make_fingerprint(pilot, timestamp, lat, lon)
             TrackingPoint.objects.create(competition=task.competition, pilot_id=pilot,
                 event_id=str(point.get("event_id", "")), timestamp=timestamp, latitude=lat, longitude=lon,
                 altitude_gps=point.get("alt"), source="volandoo", fingerprint=fp, raw=point)
             accepted += 1
+            processed_epochs.append(int(timestamp.timestamp()))
     try:
         classification = _live_classification(task.competition, task)
     except Exception as exc:
         classification = {"task_score": None, "pilots": [], "scoring_error": str(exc)}
     cutoff = data.get("cutoff_epoch")
-    return JsonResponse({"task_id": manga_id, "manga_id": manga_id, "received_cutoff_epoch": cutoff, "status": "ok",
+    processed_epoch = max(processed_epochs, default=None)
+    return JsonResponse({"task_id": manga_id, "manga_id": manga_id, "received_cutoff_epoch": cutoff,
+        "processed_epoch": processed_epoch, "status": "ok",
         "accepted": accepted, "duplicates": duplicates,
         "classification": {"computed_at_epoch": cutoff or int(datetime.now(timezone.utc).timestamp()),
                             "ranking": classification["pilots"], "task_score": classification["task_score"]}})
