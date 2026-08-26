@@ -1,6 +1,7 @@
 import json
 import os
 import secrets
+import tempfile
 from datetime import datetime, timezone
 
 from django.db import transaction
@@ -8,6 +9,53 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from .models import ApiApplication, Competition, Task, TrackingPoint
+
+
+def score_competition(comp):
+    """Replay the stored points through the existing deterministic scorer.
+
+    A task is scoreable when its settings include the original ``xctsk`` JSON
+    and ``date_epoch``. Duplicate timestamps are retained in PostgreSQL but
+    collapsed to the latest received fix for deterministic replay.
+    """
+    task_row = comp.tasks.order_by("-version").first()
+    if not task_row or not isinstance(task_row.settings.get("xctsk"), dict):
+        return None
+    from engine.igc import Fix
+    from engine.score import project, score_pilot
+    from engine.scoring import score_task
+    from engine.rules.params import GapParams
+    from engine.task import parse_xctsk
+    points = list(comp.tracking_points.order_by("pilot_id", "timestamp", "id"))
+    if not points:
+        return None
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".xctsk") as fh:
+        json.dump(task_row.settings["xctsk"], fh)
+        fh.flush()
+        task = parse_xctsk(fh.name, int(task_row.settings.get("date_epoch", 0)))
+    cfg = comp.settings
+    params = GapParams(
+        nominal_distance=float(cfg.get("nominal_distance_km", 60)) * 1000,
+        minimum_distance=float(cfg.get("minimum_distance_km", 5)) * 1000,
+        nominal_time=float(cfg.get("nominal_time_min", 90)) * 60,
+        leading_time_ratio=float(cfg.get("leading_time_ratio", 0.26)),
+        ess_no_goal_time_factor=float(cfg.get("ess_no_goal_time_factor", 0.0)),
+    )
+    by_pilot = {}
+    for p in points:
+        by_pilot.setdefault(p.pilot_id, {})[p.timestamp] = p
+    results = []
+    for pilot, rows in by_pilot.items():
+        fixes = [Fix(int(p.timestamp.timestamp()), p.latitude, p.longitude,
+                     int(p.altitude_baro or 0), int(p.altitude_gps or 0))
+                 for p in rows.values()]
+        fixes.sort(key=lambda f: f.t)
+        project(task, fixes)
+        result = score_pilot(task, fixes, fixes[-1].t, params)
+        result.pilot = pilot
+        results.append(result)
+    task_score = score_task(task, results, params, cfg.get("pilots_present"))
+    return task, task_score, results
 
 
 def body(request):
@@ -131,8 +179,18 @@ def results(request, competition_id):
     for row in rows:
         counts[row.pilot_id] = counts.get(row.pilot_id, 0) + 1
         latest.setdefault(row.pilot_id, row)
-    return JsonResponse({"competition_id": str(comp.id), "status": comp.status, "pilots": [
+    scored = score_competition(comp)
+    score_by_pilot = {}
+    task_score = None
+    if scored:
+        _task, task_score, scored_results = scored
+        score_by_pilot = {r.pilot: r for r in scored_results}
+    return JsonResponse({"competition_id": str(comp.id), "status": comp.status,
+        "task_score": ({"launch_validity": task_score.launch_validity, "distance_validity": task_score.distance_validity,
+                         "time_validity": task_score.time_validity, "task_validity": task_score.task_validity} if task_score else None), "pilots": [
         {"pilot_id": pilot, "points_received": counts[pilot], "last_timestamp": latest[pilot].timestamp.isoformat(),
          "lat": latest[pilot].latitude, "lon": latest[pilot].longitude, "alt_gps": latest[pilot].altitude_gps}
+        | ({"state": score_by_pilot[pilot].state, "distance_m": score_by_pilot[pilot].distance,
+            "total_points": score_by_pilot[pilot].total_points} if pilot in score_by_pilot else {})
         for pilot in sorted(latest)
     ]})
