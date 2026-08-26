@@ -21,6 +21,7 @@ from scoring_service import Service
 EVENTS_PATH = Path(os.getenv("LIVE_SCORING_EVENTS", "events.jsonl"))
 DATABASE_PATH = Path(os.getenv("LIVE_SCORING_DB", "live-scoring.sqlite3"))
 PUBLISH_SECONDS = float(os.getenv("LIVE_SCORING_PUBLISH_SECONDS", "1"))
+EVENT_BATCH_SIZE = int(os.getenv("LIVE_SCORING_EVENT_BATCH_SIZE", "1000"))
 
 
 class SnapshotDatabase:
@@ -89,7 +90,10 @@ class LiveWorker:
             if EVENTS_PATH.exists():
                 with EVENTS_PATH.open(encoding="utf-8") as events:
                     events.seek(position)
-                    for line in events:
+                    for _ in range(EVENT_BATCH_SIZE):
+                        line = events.readline()
+                        if not line:
+                            break
                         if line.strip():
                             self.service.apply(json.loads(line))
                     position = events.tell()
