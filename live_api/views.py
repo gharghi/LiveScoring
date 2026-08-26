@@ -92,7 +92,7 @@ def openapi(request):
         "TrackingPoint": {"type": "object", "required": ["pilot_id", "epoch", "lat", "lon", "alt"], "properties": {
             "pilot_id": {"type": "string"}, "epoch": {"type": "integer", "format": "int64", "description": "Unix epoch seconds; sender signature and GPS fix time."}, "timestamp": {"type": "integer", "format": "int64", "description": "Backward-compatible alias for epoch."},
             "lat": {"type": "number", "minimum": -90, "maximum": 90}, "lon": {"type": "number", "minimum": -180, "maximum": 180}, "alt": {"type": "number"}, "event_id": {"type": "string"}}},
-        "Classification": {"type": "object", "properties": {"computed_at_epoch": {"type": "integer", "format": "int64"}, "ranking": {"type": "array", "items": {"type": "object", "properties": {"pilot_id": {"type": "string"}, "category_id": {"type": "string"}, "rank": {"type": "integer"}, "score": {"type": "number"}}}}}},
+        "Classification": {"type": "object", "properties": {"computed_at_epoch": {"type": "integer", "format": "int64"}, "ranking": {"type": "array", "items": {"type": "object", "properties": {"pilot_id": {"type": "string"}, "category_id": {"type": "string"}, "rank": {"type": "integer"}, "state": {"type": "string"}, "score": {"type": "number"}, "distance_m": {"type": "number"}, "speed_kmh": {"type": "number", "nullable": True}, "ess": {"type": "boolean"}, "goal": {"type": "boolean"}, "position": {"type": "object", "properties": {"lat": {"type": "number"}, "lon": {"type": "number"}, "alt_m": {"type": "number", "nullable": True}, "next_waypoint_index": {"type": "integer", "nullable": True}, "next_waypoint": {"type": "string", "nullable": True}, "distance_to_next_m": {"type": "number", "nullable": True}, "distance_to_goal_m": {"type": "number", "nullable": True}, "progress_percent": {"type": "number", "nullable": True}}}}}}}},
     }
     event_body = {"type": "object", "required": ["schema_version", "event_id", "event_name", "sent_at", "formula", "categories", "pilots"], "properties": {
         "schema_version": {"type": "string"}, "event_id": {"type": "string"}, "event_name": {"type": "string"}, "sent_at": {"type": "string", "format": "date-time"},
@@ -316,10 +316,24 @@ def _live_classification(comp, task=None):
         task_obj, task_score, pilot_results = scored
         pilots = []
         for rank, result in enumerate(sorted(pilot_results, key=lambda r: r.rank_key), 1):
+            next_wp = task_obj.waypoints[result.next_wp] if result.next_wp < len(task_obj.waypoints) else None
+            distance_to_next = None
+            if next_wp and result.last_lat and result.last_lon:
+                from engine.geo import haversine
+                distance_to_next = haversine(result.last_lat, result.last_lon, next_wp.lat, next_wp.lon)
+            progress = None
+            if task_obj.total_distance:
+                progress = min(100.0, max(0.0, result.distance / task_obj.total_distance * 100.0))
             pilots.append({"pilot_id": result.pilot, "rank": rank, "state": result.state,
                 "score": result.total_points, "distance_m": result.distance,
                 "speed_kmh": result.speed, "goal": result.goal_time is not None,
-                "ess": result.ess_time is not None})
+                "ess": result.ess_time is not None,
+                "position": {"lat": result.last_lat, "lon": result.last_lon, "alt_m": result.last_alt,
+                    "next_waypoint_index": next_wp.index if next_wp else None,
+                    "next_waypoint": next_wp.name if next_wp else None,
+                    "distance_to_next_m": distance_to_next,
+                    "distance_to_goal_m": max(0.0, task_obj.total_distance - result.distance),
+                    "progress_percent": progress}})
         return {"task_score": {"launch_validity": task_score.launch_validity,
             "distance_validity": task_score.distance_validity, "time_validity": task_score.time_validity,
             "task_validity": task_score.task_validity}, "pilots": pilots}
@@ -327,7 +341,10 @@ def _live_classification(comp, task=None):
     for row in comp.tracking_points.order_by("pilot_id", "-timestamp"):
         latest.setdefault(row.pilot_id, row)
     return {"task_score": None, "pilots": [{"pilot_id": p, "rank": i, "state": "TRACKING",
-        "score": 0, "distance_m": 0} for i, p in enumerate(sorted(latest), 1)]}
+        "score": 0, "distance_m": 0, "position": {"lat": row.latitude, "lon": row.longitude,
+        "alt_m": row.altitude_gps, "next_waypoint": None, "distance_to_next_m": None,
+        "distance_to_goal_m": None, "progress_percent": None}}
+        for i, (p, row) in enumerate(sorted(latest.items()), 1)]}
 
 
 @csrf_exempt
