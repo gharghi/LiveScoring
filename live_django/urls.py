@@ -13,4 +13,7 @@ urlpatterns = [
     path("api/v1/competitions/<uuid:competition_id>/tasks", views.tasks),
     path("api/v1/competitions/<uuid:competition_id>/tracking", views.tracking),
     path("api/v1/competitions/<uuid:competition_id>/results", views.results),
+    path("events/sync", views.event_sync),
+    path("events/<str:event_id>/mangas/sync", views.manga_sync),
+    path("mangas/<str:manga_id>/points", views.manga_points),
 ]

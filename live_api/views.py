@@ -82,18 +82,161 @@ def health(request):
 
 
 def openapi(request):
-    return JsonResponse({"openapi": "3.0.3", "info": {"title": "LiveScoring API", "version": "2.0.0"},
-        "servers": [{"url": "https://ls.buildmycabin.com"}], "paths": {
-            "/api/v1/api-keys": {"post": {"summary": "Create a persistent application API key"}},
-            "/api/v1/competitions": {"post": {"summary": "Create a competition with all settings"}},
-            "/api/v1/competitions/{id}/tasks": {"post": {"summary": "Configure a task"}},
-            "/api/v1/competitions/{id}/tracking": {"post": {"summary": "Ingest partial, duplicate or out-of-order tracking"}},
-            "/api/v1/competitions/{id}/results": {"get": {"summary": "Get latest pilot positions"}},
-        }})
+    schemas = {
+        "Error": {"type": "object", "properties": {"error": {"type": "string"}}},
+        "Pilot": {"type": "object", "required": ["pilot_id"], "properties": {
+            "pilot_id": {"type": "string"}, "name": {"type": "string"},
+            "category_id": {"type": "string"}, "tracker_id": {"type": "string"},
+            "competition_number": {"type": "string"}, "country": {"type": "string"},
+            "glider": {"type": "string"}, "metadata": {"type": "object"}}},
+        "TrackingPoint": {"type": "object", "required": ["pilot_id", "timestamp", "lat", "lon", "alt"], "properties": {
+            "pilot_id": {"type": "string"}, "timestamp": {"type": "integer", "format": "int64", "description": "Unix epoch seconds of GPS fix"},
+            "lat": {"type": "number", "minimum": -90, "maximum": 90}, "lon": {"type": "number", "minimum": -180, "maximum": 180}, "alt": {"type": "number"}, "event_id": {"type": "string"}}},
+        "Classification": {"type": "object", "properties": {"computed_at_epoch": {"type": "integer", "format": "int64"}, "ranking": {"type": "array", "items": {"type": "object", "properties": {"pilot_id": {"type": "string"}, "category_id": {"type": "string"}, "rank": {"type": "integer"}, "score": {"type": "number"}}}}}},
+    }
+    event_body = {"type": "object", "required": ["schema_version", "event_id", "event_name", "sent_at", "formula", "categories", "pilots"], "properties": {
+        "schema_version": {"type": "string"}, "event_id": {"type": "string"}, "event_name": {"type": "string"}, "sent_at": {"type": "string", "format": "date-time"},
+        "formula": {"type": "object", "properties": {"type": {"type": "string", "example": "GAP"}, "parameters": {"type": "object", "additionalProperties": True}}},
+        "categories": {"type": "array", "items": {"type": "object", "required": ["category_id", "name"], "properties": {"category_id": {"type": "string"}, "name": {"type": "string"}, "formula_override": {"type": "object", "nullable": True}}}},
+        "pilots": {"type": "array", "items": {"$ref": "#/components/schemas/Pilot"}}}}
+    manga_body = {"type": "object", "required": ["schema_version", "event_id", "manga_id", "manga_date", "scheduled_start_time", "status", "pilots", "sent_at"], "properties": {
+        "schema_version": {"type": "string"}, "event_id": {"type": "string"}, "manga_id": {"type": "string"}, "manga_date": {"type": "string", "format": "date"}, "scheduled_start_time": {"type": "string", "format": "date-time"}, "status": {"type": "string"}, "pilots": {"type": "array", "items": {"type": "string"}}, "sent_at": {"type": "string", "format": "date-time"}}}
+    points_body = {"type": "object", "required": ["schema_version", "event_id", "manga_id", "cutoff_epoch", "points"], "properties": {
+        "schema_version": {"type": "string"}, "event_id": {"type": "string"}, "manga_id": {"type": "string"}, "cutoff_epoch": {"type": "integer", "format": "int64"}, "points": {"type": "array", "maxItems": 5000, "items": {"$ref": "#/components/schemas/TrackingPoint"}}}}
+    paths = {
+        "/events/sync": {"post": {"tags": ["Event sync"], "security": [{"ApiKeyAuth": []}], "summary": "Upsert event, formula, categories and pilot roster", "requestBody": {"required": True, "content": {"application/json": {"schema": event_body}}}, "responses": {"200": {"description": "{event_id,status,errors}"}, "400": {"description": "Validation errors"}}}},
+        "/events/{event_id}/mangas/sync": {"post": {"tags": ["Manga sync"], "security": [{"ApiKeyAuth": []}], "summary": "Upsert a stable manga/day configuration", "parameters": [{"in": "path", "name": "event_id", "required": True, "schema": {"type": "string"}}], "requestBody": {"required": True, "content": {"application/json": {"schema": manga_body}}}, "responses": {"200": {"description": "{event_id,manga_id,status,errors}"}, "400": {"description": "Validation errors"}, "404": {"description": "Unknown event"}}}},
+        "/mangas/{manga_id}/points": {"post": {"tags": ["Live tracking"], "security": [{"ApiKeyAuth": []}], "summary": "Push points and receive classification", "description": "Send every ~15 seconds. Deduplication key is (pilot_id,timestamp). Late, out-of-order, duplicate and missing points are accepted. cutoff_epoch is a cache watermark and is echoed as received_cutoff_epoch.", "parameters": [{"in": "path", "name": "manga_id", "required": True, "schema": {"type": "string"}}], "requestBody": {"required": True, "content": {"application/json": {"schema": points_body}}}, "responses": {"200": {"description": "Ack and classification", "content": {"application/json": {"schema": {"type": "object", "properties": {"manga_id": {"type": "string"}, "received_cutoff_epoch": {"type": "integer"}, "status": {"type": "string"}, "classification": {"$ref": "#/components/schemas/Classification"}}}}}}, "400": {"description": "Invalid points"}, "404": {"description": "Unknown manga"}}}},
+    }
+    return JsonResponse({"openapi": "3.0.3", "info": {"title": "LiveScoring Integration API", "version": "3.0.0", "description": "Volandoo event/manga synchronization and live tracking contract."}, "servers": [{"url": "https://ls.buildmycabin.com"}], "components": {"securitySchemes": {"ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-API-Key"}}, "schemas": schemas}, "paths": paths})
 
 
 def swagger_docs(request):
     return render(request, "swagger-ui.html")
+
+
+def _integration_auth(request):
+    app = auth(request)
+    if not app:
+        return None, error("valid X-API-Key or Bearer token required", 401)
+    return app, None
+
+
+@csrf_exempt
+def event_sync(request):
+    """Upsert the stable Volandoo event configuration."""
+    if request.method != "POST":
+        return error("method not allowed", 405)
+    app, response = _integration_auth(request)
+    if response:
+        return response
+    data = body(request)
+    if not data or not data.get("event_id") or not data.get("event_name"):
+        return JsonResponse({"event_id": data.get("event_id") if data else None, "status": "error",
+                             "errors": [{"field": "event_id/event_name", "message": "Both fields are required"}]}, status=400)
+    categories = data.get("categories", [])
+    category_ids = {c.get("category_id") for c in categories}
+    errors = []
+    for i, pilot in enumerate(data.get("pilots", [])):
+        if not pilot.get("pilot_id"):
+            errors.append({"field": f"pilots[{i}].pilot_id", "message": "pilot_id is required"})
+        if pilot.get("category_id") and pilot["category_id"] not in category_ids:
+            errors.append({"field": f"pilots[{i}].category_id", "message": f"Unknown category_id '{pilot['category_id']}'"})
+    if errors:
+        return JsonResponse({"event_id": data["event_id"], "status": "error", "errors": errors}, status=400)
+    formula = data.get("formula", {})
+    settings = {"formula": formula, "categories": categories, "pilots": data.get("pilots", []),
+                "schema_version": data.get("schema_version", "1.0"), "sent_at": data.get("sent_at")}
+    comp, created = Competition.objects.update_or_create(
+        external_event_id=str(data["event_id"]), defaults={"owner": app, "name": data["event_name"],
+        "settings": settings, "status": "open"})
+    return JsonResponse({"event_id": str(data["event_id"]), "status": "ok", "errors": [],
+                         "competition_id": str(comp.id), "created": created})
+
+
+@csrf_exempt
+def manga_sync(request, event_id):
+    if request.method != "POST":
+        return error("method not allowed", 405)
+    app, response = _integration_auth(request)
+    if response:
+        return response
+    data = body(request) or {}
+    try:
+        comp = Competition.objects.get(external_event_id=event_id, owner=app)
+    except Competition.DoesNotExist:
+        return JsonResponse({"event_id": event_id, "status": "error", "errors": [{"field": "event_id", "message": "Unknown event_id"}]}, status=404)
+    required = ["manga_id", "manga_date", "scheduled_start_time", "status"]
+    errors = [{"field": f, "message": "This field is required"} for f in required if not data.get(f)]
+    if errors:
+        return JsonResponse({"event_id": event_id, "status": "error", "errors": errors}, status=400)
+    settings = {"manga_date": data["manga_date"], "scheduled_start_time": data["scheduled_start_time"],
+                "status": data["status"], "pilots": data.get("pilots", []), "sent_at": data.get("sent_at"),
+                "schema_version": data.get("schema_version", "1.0")}
+    task, created = Task.objects.update_or_create(external_manga_id=str(data["manga_id"]), defaults={
+        "competition": comp, "name": str(data["manga_id"]), "settings": settings})
+    if not created:
+        task.version = task.version + 1
+        task.save(update_fields=["competition", "settings", "version"])
+    return JsonResponse({"event_id": event_id, "manga_id": data["manga_id"], "status": "ok", "errors": [], "created": created})
+
+
+def _epoch_datetime(value):
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, tz=timezone.utc)
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+@csrf_exempt
+def manga_points(request, manga_id):
+    if request.method != "POST":
+        return error("method not allowed", 405)
+    app, response = _integration_auth(request)
+    if response:
+        return response
+    try:
+        task = Task.objects.select_related("competition").get(external_manga_id=manga_id, competition__owner=app)
+    except Task.DoesNotExist:
+        return error("manga not found", 404)
+    data = body(request) or {}
+    points = data.get("points", [])
+    if not isinstance(points, list) or len(points) > 5000:
+        return error("points must be a list of at most 5000 items")
+    if data.get("event_id") and data["event_id"] != task.competition.external_event_id:
+        return error("event_id does not match manga", 400)
+    accepted = duplicates = 0
+    with transaction.atomic():
+        for point in points:
+            try:
+                pilot = str(point["pilot_id"])
+                timestamp = _epoch_datetime(point["timestamp"])
+                lat, lon = float(point["lat"]), float(point["lon"])
+                if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                    raise ValueError
+            except (KeyError, TypeError, ValueError, OverflowError):
+                return error("each point requires pilot_id, epoch timestamp, lat and lon")
+            # Integration identity is (pilot_id, GPS timestamp), independent of
+            # arrival batch, coordinates, cutoff watermark, or event_id.
+            if TrackingPoint.objects.filter(competition=task.competition, pilot_id=pilot, timestamp=timestamp).exists():
+                duplicates += 1
+                continue
+            fp = TrackingPoint.make_fingerprint(pilot, timestamp, lat, lon)
+            TrackingPoint.objects.create(competition=task.competition, pilot_id=pilot,
+                event_id=str(point.get("event_id", "")), timestamp=timestamp, latitude=lat, longitude=lon,
+                altitude_gps=point.get("alt"), source="volandoo", fingerprint=fp, raw=point)
+            accepted += 1
+    # Return a deterministic live classification immediately. The regular
+    # results endpoint performs the full task replay when an XCTrack task is
+    # available; this response remains useful while a batch is being ingested.
+    latest = {}
+    for row in task.competition.tracking_points.order_by("pilot_id", "-timestamp"):
+        latest.setdefault(row.pilot_id, row)
+    ranking = [{"pilot_id": pilot, "rank": rank, "score": 0}
+               for rank, pilot in enumerate(sorted(latest), 1)]
+    cutoff = data.get("cutoff_epoch")
+    return JsonResponse({"manga_id": manga_id, "received_cutoff_epoch": cutoff, "status": "ok",
+        "accepted": accepted, "duplicates": duplicates,
+        "classification": {"computed_at_epoch": cutoff or int(datetime.now(timezone.utc).timestamp()), "ranking": ranking}})
 
 
 @csrf_exempt
