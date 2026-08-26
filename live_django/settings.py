@@ -29,6 +29,7 @@ TEMPLATES = [{
     ]},
 }]
 STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # Nginx terminates TLS in production. Preserve HTTPS semantics for Django's
 # secure cookies and CSRF checks while keeping local development convenient.
