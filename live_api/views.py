@@ -101,12 +101,18 @@ def openapi(request):
         "pilots": {"type": "array", "items": {"$ref": "#/components/schemas/Pilot"}}}}
     manga_body = {"type": "object", "required": ["schema_version", "event_id", "manga_id", "manga_date", "scheduled_start_time", "status", "pilots", "sent_at"], "properties": {
         "schema_version": {"type": "string"}, "event_id": {"type": "string"}, "manga_id": {"type": "string"}, "manga_date": {"type": "string", "format": "date"}, "scheduled_start_time": {"type": "string", "format": "date-time"}, "status": {"type": "string"}, "pilots": {"type": "array", "items": {"type": "string"}}, "sent_at": {"type": "string", "format": "date-time"}}}
+    task_body = {"type": "object", "required": ["schema_version", "event_id", "task_id", "task_date", "scheduled_start_time", "status", "pilots", "sent_at"], "properties": {
+        "schema_version": {"type": "string"}, "event_id": {"type": "string"}, "task_id": {"type": "string"}, "task_date": {"type": "string", "format": "date"}, "scheduled_start_time": {"type": "string", "format": "date-time"}, "status": {"type": "string"}, "pilots": {"type": "array", "items": {"type": "string"}}, "sent_at": {"type": "string", "format": "date-time"}, "date_epoch": {"type": "integer", "format": "int64"}, "xctsk": {"type": "object"}}}
     points_body = {"type": "object", "required": ["schema_version", "event_id", "manga_id", "cutoff_epoch", "points"], "properties": {
         "schema_version": {"type": "string"}, "event_id": {"type": "string"}, "manga_id": {"type": "string"}, "cutoff_epoch": {"type": "integer", "format": "int64"}, "points": {"type": "array", "maxItems": 5000, "items": {"$ref": "#/components/schemas/TrackingPoint"}}}}
     paths = {
         "/events/sync": {"post": {"tags": ["Event sync"], "security": [{"ApiKeyAuth": []}], "summary": "Upsert event, formula, categories and pilot roster", "requestBody": {"required": True, "content": {"application/json": {"schema": event_body}}}, "responses": {"200": {"description": "{event_id,status,errors}"}, "400": {"description": "Validation errors"}}}},
         "/events/{event_id}/mangas/sync": {"post": {"tags": ["Manga sync"], "security": [{"ApiKeyAuth": []}], "summary": "Upsert a stable manga/day configuration", "parameters": [{"in": "path", "name": "event_id", "required": True, "schema": {"type": "string"}}], "requestBody": {"required": True, "content": {"application/json": {"schema": manga_body}}}, "responses": {"200": {"description": "{event_id,manga_id,status,errors}"}, "400": {"description": "Validation errors"}, "404": {"description": "Unknown event"}}}},
-        "/mangas/{manga_id}/points": {"post": {"tags": ["Live tracking"], "security": [{"ApiKeyAuth": []}], "summary": "Push points and receive classification", "description": "Send every ~15 seconds. Deduplication key is (pilot_id,timestamp). Late, out-of-order, duplicate and missing points are accepted. cutoff_epoch is a cache watermark and is echoed as received_cutoff_epoch.", "parameters": [{"in": "path", "name": "manga_id", "required": True, "schema": {"type": "string"}}], "requestBody": {"required": True, "content": {"application/json": {"schema": points_body}}}, "responses": {"200": {"description": "Ack and classification", "content": {"application/json": {"schema": {"type": "object", "properties": {"manga_id": {"type": "string"}, "received_cutoff_epoch": {"type": "integer"}, "status": {"type": "string"}, "classification": {"$ref": "#/components/schemas/Classification"}}}}}}, "400": {"description": "Invalid points"}, "404": {"description": "Unknown manga"}}}},
+        "/mangas/{manga_id}/points": {"post": {"tags": ["Live tracking"], "security": [{"ApiKeyAuth": []}], "summary": "Push points and receive classification (legacy manga name)", "description": "Send every ~15 seconds. Deduplication key is (pilot_id,timestamp). Late, out-of-order, duplicate and missing points are accepted. cutoff_epoch is a cache watermark and is echoed as received_cutoff_epoch.", "parameters": [{"in": "path", "name": "manga_id", "required": True, "schema": {"type": "string"}}], "requestBody": {"required": True, "content": {"application/json": {"schema": points_body}}}, "responses": {"200": {"description": "Ack and classification", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Classification"}}}}, "400": {"description": "Invalid points"}, "404": {"description": "Unknown task"}}}},
+        "/events/{event_id}/tasks/sync": {"post": {"tags": ["Task sync"], "security": [{"ApiKeyAuth": []}], "summary": "Upsert a stable task/day configuration", "parameters": [{"in": "path", "name": "event_id", "required": True, "schema": {"type": "string"}}], "requestBody": {"required": True, "content": {"application/json": {"schema": task_body}}}, "responses": {"200": {"description": "Task accepted"}, "400": {"description": "Validation errors"}, "404": {"description": "Unknown event"}}}},
+        "/tasks/{task_id}/points": {"post": {"tags": ["Live tracking"], "security": [{"ApiKeyAuth": []}], "summary": "Push task tracking points and calculate immediately", "parameters": [{"in": "path", "name": "task_id", "required": True, "schema": {"type": "string"}}], "requestBody": {"required": True, "content": {"application/json": {"schema": points_body}}}, "responses": {"200": {"description": "Ingestion acknowledgement and latest classification"}, "404": {"description": "Unknown task"}}}},
+        "/tasks/{task_id}/results": {"get": {"tags": ["Results"], "security": [{"ApiKeyAuth": []}], "summary": "Get the latest calculated task results", "parameters": [{"in": "path", "name": "task_id", "required": True, "schema": {"type": "string"}}], "responses": {"200": {"description": "Current ranking and per-pilot scoring fields", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Classification"}}}}, "404": {"description": "Unknown task"}}}},
+        "/events/{event_id}/results": {"get": {"tags": ["Results"], "security": [{"ApiKeyAuth": []}], "summary": "Get the latest task results for an event", "parameters": [{"in": "path", "name": "event_id", "required": True, "schema": {"type": "string"}}], "responses": {"200": {"description": "Current ranking"}, "404": {"description": "Unknown event"}}}},
     }
     return JsonResponse({"openapi": "3.0.3", "info": {"title": "LiveScoring Integration API", "version": "3.0.0", "description": "Volandoo event/manga synchronization and live tracking contract."}, "servers": [{"url": "https://ls.buildmycabin.com"}], "components": {"securitySchemes": {"ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-API-Key"}}, "schemas": schemas}, "paths": paths})
 
@@ -166,19 +172,29 @@ def manga_sync(request, event_id):
         comp = Competition.objects.get(external_event_id=event_id, owner=app)
     except Competition.DoesNotExist:
         return JsonResponse({"event_id": event_id, "status": "error", "errors": [{"field": "event_id", "message": "Unknown event_id"}]}, status=404)
-    required = ["manga_id", "manga_date", "scheduled_start_time", "status"]
-    errors = [{"field": f, "message": "This field is required"} for f in required if not data.get(f)]
+    task_id = data.get("task_id", data.get("manga_id"))
+    task_date = data.get("task_date", data.get("manga_date"))
+    required = [("task_id", task_id), ("task_date", task_date), ("scheduled_start_time", data.get("scheduled_start_time")), ("status", data.get("status"))]
+    errors = [{"field": f, "message": "This field is required"} for f, value in required if not value]
     if errors:
         return JsonResponse({"event_id": event_id, "status": "error", "errors": errors}, status=400)
-    settings = {"manga_date": data["manga_date"], "scheduled_start_time": data["scheduled_start_time"],
+    settings = {"task_date": task_date, "manga_date": task_date, "scheduled_start_time": data["scheduled_start_time"],
                 "status": data["status"], "pilots": data.get("pilots", []), "sent_at": data.get("sent_at"),
                 "schema_version": data.get("schema_version", "1.0")}
-    task, created = Task.objects.update_or_create(external_manga_id=str(data["manga_id"]), defaults={
-        "competition": comp, "name": str(data["manga_id"]), "settings": settings})
+    # Accept the English task payload as well as the original manga wrapper.
+    task_config = data.get("task", data.get("settings", {}))
+    if isinstance(task_config, dict):
+        settings.update(task_config)
+    if data.get("xctsk") is not None:
+        settings["xctsk"] = data["xctsk"]
+    if data.get("date_epoch") is not None:
+        settings["date_epoch"] = data["date_epoch"]
+    task, created = Task.objects.update_or_create(external_manga_id=str(task_id), defaults={
+        "competition": comp, "name": str(task_id), "settings": settings})
     if not created:
         task.version = task.version + 1
         task.save(update_fields=["competition", "settings", "version"])
-    return JsonResponse({"event_id": event_id, "manga_id": data["manga_id"], "status": "ok", "errors": [], "created": created})
+    return JsonResponse({"event_id": event_id, "task_id": task_id, "manga_id": task_id, "status": "ok", "errors": [], "created": created})
 
 
 def _epoch_datetime(value):
@@ -197,7 +213,7 @@ def manga_points(request, manga_id):
     try:
         task = Task.objects.select_related("competition").get(external_manga_id=manga_id, competition__owner=app)
     except Task.DoesNotExist:
-        return error("manga not found", 404)
+        return error("task not found", 404)
     data = body(request) or {}
     points = data.get("points", [])
     if not isinstance(points, list) or len(points) > 5000:
@@ -225,18 +241,74 @@ def manga_points(request, manga_id):
                 event_id=str(point.get("event_id", "")), timestamp=timestamp, latitude=lat, longitude=lon,
                 altitude_gps=point.get("alt"), source="volandoo", fingerprint=fp, raw=point)
             accepted += 1
-    # Return a deterministic live classification immediately. The regular
-    # results endpoint performs the full task replay when an XCTrack task is
-    # available; this response remains useful while a batch is being ingested.
-    latest = {}
-    for row in task.competition.tracking_points.order_by("pilot_id", "-timestamp"):
-        latest.setdefault(row.pilot_id, row)
-    ranking = [{"pilot_id": pilot, "rank": rank, "score": 0}
-               for rank, pilot in enumerate(sorted(latest), 1)]
+    try:
+        classification = _live_classification(task.competition, task)
+    except Exception as exc:
+        classification = {"task_score": None, "pilots": [], "scoring_error": str(exc)}
     cutoff = data.get("cutoff_epoch")
-    return JsonResponse({"manga_id": manga_id, "received_cutoff_epoch": cutoff, "status": "ok",
+    return JsonResponse({"task_id": manga_id, "manga_id": manga_id, "received_cutoff_epoch": cutoff, "status": "ok",
         "accepted": accepted, "duplicates": duplicates,
-        "classification": {"computed_at_epoch": cutoff or int(datetime.now(timezone.utc).timestamp()), "ranking": ranking}})
+        "classification": {"computed_at_epoch": cutoff or int(datetime.now(timezone.utc).timestamp()),
+                            "ranking": classification["pilots"], "task_score": classification["task_score"]}})
+
+
+# English terminology for new integrations. The manga routes remain available
+# as compatibility aliases for already deployed Volandoo clients.
+task_sync = manga_sync
+task_points = manga_points
+
+
+@csrf_exempt
+def task_results(request, task_id):
+    if request.method != "GET":
+        return error("method not allowed", 405)
+    app, response = _integration_auth(request)
+    if response:
+        return response
+    try:
+        task = Task.objects.select_related("competition").get(external_manga_id=task_id, competition__owner=app)
+    except Task.DoesNotExist:
+        return error("task not found", 404)
+    classification = _live_classification(task.competition, task)
+    return JsonResponse({"task_id": task_id, "event_id": task.competition.external_event_id,
+        "computed_at_epoch": int(datetime.now(timezone.utc).timestamp()), **classification})
+
+
+@csrf_exempt
+def event_results(request, event_id):
+    if request.method != "GET":
+        return error("method not allowed", 405)
+    app, response = _integration_auth(request)
+    if response:
+        return response
+    try:
+        comp = Competition.objects.get(external_event_id=event_id, owner=app)
+    except Competition.DoesNotExist:
+        return error("event not found", 404)
+    task = comp.tasks.order_by("-version").first()
+    classification = _live_classification(comp, task)
+    return JsonResponse({"event_id": event_id, "task_id": task.external_manga_id if task else None,
+        "computed_at_epoch": int(datetime.now(timezone.utc).timestamp()), **classification})
+
+
+def _live_classification(comp, task=None):
+    scored = score_competition(comp)
+    if scored:
+        task_obj, task_score, pilot_results = scored
+        pilots = []
+        for rank, result in enumerate(sorted(pilot_results, key=lambda r: r.rank_key), 1):
+            pilots.append({"pilot_id": result.pilot, "rank": rank, "state": result.state,
+                "score": result.total_points, "distance_m": result.distance,
+                "speed_kmh": result.speed, "goal": result.goal_time is not None,
+                "ess": result.ess_time is not None})
+        return {"task_score": {"launch_validity": task_score.launch_validity,
+            "distance_validity": task_score.distance_validity, "time_validity": task_score.time_validity,
+            "task_validity": task_score.task_validity}, "pilots": pilots}
+    latest = {}
+    for row in comp.tracking_points.order_by("pilot_id", "-timestamp"):
+        latest.setdefault(row.pilot_id, row)
+    return {"task_score": None, "pilots": [{"pilot_id": p, "rank": i, "state": "TRACKING",
+        "score": 0, "distance_m": 0} for i, p in enumerate(sorted(latest), 1)]}
 
 
 @csrf_exempt

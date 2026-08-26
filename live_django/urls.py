@@ -16,4 +16,8 @@ urlpatterns = [
     path("events/sync", views.event_sync),
     path("events/<str:event_id>/mangas/sync", views.manga_sync),
     path("mangas/<str:manga_id>/points", views.manga_points),
+    path("events/<str:event_id>/tasks/sync", views.task_sync),
+    path("tasks/<str:task_id>/points", views.task_points),
+    path("tasks/<str:task_id>/results", views.task_results),
+    path("events/<str:event_id>/results", views.event_results),
 ]

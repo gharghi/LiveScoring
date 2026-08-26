@@ -122,6 +122,11 @@ or, on validation failure:
 
 ## 6. Phase 2 — Manga (Stage) Configuration Sync
 
+The API uses **task** as the English name for a manga. New clients should use
+`POST /events/{event_id}/tasks/sync`, with `task_id` and `task_date`, and
+`POST /tasks/{task_id}/points`. The manga routes below remain available as
+backward-compatible aliases.
+
 **Trigger:** Organizer creates or edits a day's manga in Volandoo.
 
 **Request:** `POST /events/{event_id}/mangas/sync`
@@ -211,6 +216,19 @@ Sent by Volandoo once it has published the ranking on the public page. This is a
 ---
 
 ## 8. Data Handling Rules
+
+### English result endpoints
+
+After every accepted points batch, Live Scoring recalculates immediately and
+includes the provisional classification in the response. Volandoo can also
+fetch the latest calculation at any time:
+
+- `GET /tasks/{task_id}/results`
+- `GET /events/{event_id}/results`
+
+Both endpoints return `computed_at_epoch`, `task_score`, and a `pilots` array
+containing `pilot_id`, `rank`, `state`, `score`, `distance_m`, `speed_kmh`,
+`ess`, and `goal` where scoring data is available.
 
 These rules exist so that normal tracker/network imperfections never become integration bugs:
 
