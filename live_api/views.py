@@ -2,6 +2,7 @@ import json
 import os
 import secrets
 import tempfile
+import time
 from datetime import datetime, timezone
 
 from django.db import transaction
@@ -12,14 +13,14 @@ from django.views.decorators.csrf import csrf_exempt
 from .models import ApiApplication, Competition, Task, TrackingPoint
 
 
-def score_competition(comp):
+def score_competition(comp, task_row=None):
     """Replay the stored points through the existing deterministic scorer.
 
     A task is scoreable when its settings include the original ``xctsk`` JSON
     and ``date_epoch``. Duplicate timestamps are retained in PostgreSQL but
     collapsed to the latest received fix for deterministic replay.
     """
-    task_row = comp.tasks.order_by("-version").first()
+    task_row = task_row or comp.tasks.order_by("-version").first()
     if not task_row or not isinstance(task_row.settings.get("xctsk"), dict):
         return None
     from engine.igc import Fix
@@ -27,7 +28,7 @@ def score_competition(comp):
     from engine.scoring import score_task
     from engine.rules.params import GapParams
     from engine.task import parse_xctsk
-    points = list(comp.tracking_points.order_by("pilot_id", "timestamp", "id"))
+    points = list(comp.tracking_points.filter(task=task_row).order_by("pilot_id", "timestamp", "id"))
     if not points:
         return None
     with tempfile.NamedTemporaryFile(mode="w", suffix=".xctsk") as fh:
@@ -210,6 +211,7 @@ def manga_points(request, manga_id):
     app, response = _integration_auth(request)
     if response:
         return response
+    started_at = time.perf_counter()
     try:
         task = Task.objects.select_related("competition").get(external_manga_id=manga_id, competition__owner=app)
     except Task.DoesNotExist:
@@ -237,12 +239,12 @@ def manga_points(request, manga_id):
                 return error("each point requires pilot_id, epoch (or timestamp), lat and lon")
             # Integration identity is (pilot_id, GPS timestamp), independent of
             # arrival batch, coordinates, cutoff watermark, or event_id.
-            if TrackingPoint.objects.filter(competition=task.competition, pilot_id=pilot, timestamp=timestamp).exists():
+            if TrackingPoint.objects.filter(task=task, pilot_id=pilot, timestamp=timestamp).exists():
                 duplicates += 1
                 processed_epochs.append(int(timestamp.timestamp()))
                 continue
             fp = TrackingPoint.make_fingerprint(pilot, timestamp, lat, lon)
-            TrackingPoint.objects.create(competition=task.competition, pilot_id=pilot,
+            TrackingPoint.objects.create(competition=task.competition, task=task, pilot_id=pilot,
                 event_id=str(point.get("event_id", "")), timestamp=timestamp, latitude=lat, longitude=lon,
                 altitude_gps=point.get("alt"), source="volandoo", fingerprint=fp, raw=point)
             accepted += 1
@@ -256,6 +258,7 @@ def manga_points(request, manga_id):
     return JsonResponse({"task_id": manga_id, "manga_id": manga_id, "received_cutoff_epoch": cutoff,
         "processed_epoch": processed_epoch, "status": "ok",
         "accepted": accepted, "duplicates": duplicates,
+        "processing_ms": round((time.perf_counter() - started_at) * 1000, 2),
         "classification": {"computed_at_epoch": cutoff or int(datetime.now(timezone.utc).timestamp()),
                             "ranking": classification["pilots"], "task_score": classification["task_score"]}})
 
@@ -311,7 +314,7 @@ def event_results(request, event_id):
 
 
 def _live_classification(comp, task=None):
-    scored = score_competition(comp)
+    scored = score_competition(comp, task)
     if scored:
         task_obj, task_score, pilot_results = scored
         pilots = []
@@ -338,7 +341,8 @@ def _live_classification(comp, task=None):
             "distance_validity": task_score.distance_validity, "time_validity": task_score.time_validity,
             "task_validity": task_score.task_validity}, "pilots": pilots}
     latest = {}
-    for row in comp.tracking_points.order_by("pilot_id", "-timestamp"):
+    rows = comp.tracking_points.filter(task=task) if task else comp.tracking_points.none()
+    for row in rows.order_by("pilot_id", "-timestamp"):
         latest.setdefault(row.pilot_id, row)
     return {"task_score": None, "pilots": [{"pilot_id": p, "rank": i, "state": "TRACKING",
         "score": 0, "distance_m": 0, "position": {"lat": row.latitude, "lon": row.longitude,
@@ -407,6 +411,13 @@ def tracking(request, competition_id):
     if not data: return error("JSON body required")
     points = data.get("points", [data]) if isinstance(data, dict) else data
     if not isinstance(points, list) or len(points) > 5000: return error("points must be a list of at most 5000 items")
+    task = None
+    requested_task = data.get("task_id") if isinstance(data, dict) else None
+    if requested_task:
+        task = comp.tasks.filter(external_manga_id=str(requested_task)).first()
+        if task is None:
+            try: task = comp.tasks.get(id=requested_task)
+            except (Task.DoesNotExist, ValueError): return error("task not found", 404)
     accepted = duplicates = 0
     with transaction.atomic():
         for point in points:
@@ -419,7 +430,7 @@ def tracking(request, competition_id):
             except (KeyError, TypeError, ValueError): return error("each point requires pilot_id, ISO timestamp, lat and lon")
             fp = TrackingPoint.make_fingerprint(pilot, timestamp, lat, lon)
             if TrackingPoint.objects.filter(competition=comp, fingerprint=fp).exists(): duplicates += 1
-            TrackingPoint.objects.create(competition=comp, pilot_id=pilot, event_id=str(point.get("event_id", "")), timestamp=timestamp,
+            TrackingPoint.objects.create(competition=comp, task=task, pilot_id=pilot, event_id=str(point.get("event_id", "")), timestamp=timestamp,
                 latitude=lat, longitude=lon, altitude_gps=point.get("alt_gps"), altitude_baro=point.get("alt_baro"),
                 source=str(point.get("source", "")), fingerprint=fp, raw=point)
             accepted += 1

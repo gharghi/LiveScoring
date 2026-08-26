@@ -41,6 +41,7 @@ class Task(models.Model):
 class TrackingPoint(models.Model):
     id = models.BigAutoField(primary_key=True)
     competition = models.ForeignKey(Competition, on_delete=models.CASCADE, related_name="tracking_points")
+    task = models.ForeignKey(Task, on_delete=models.CASCADE, null=True, blank=True, related_name="tracking_points")
     pilot_id = models.CharField(max_length=200)
     event_id = models.CharField(max_length=200, blank=True, default="")
     timestamp = models.DateTimeField()
