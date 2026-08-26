@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from django.db import transaction
 from django.http import JsonResponse
+from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 
 from .models import ApiApplication, Competition, Task, TrackingPoint
@@ -89,6 +90,10 @@ def openapi(request):
             "/api/v1/competitions/{id}/tracking": {"post": {"summary": "Ingest partial, duplicate or out-of-order tracking"}},
             "/api/v1/competitions/{id}/results": {"get": {"summary": "Get latest pilot positions"}},
         }})
+
+
+def swagger_docs(request):
+    return render(request, "swagger-ui.html")
 
 
 @csrf_exempt

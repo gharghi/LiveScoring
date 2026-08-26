@@ -6,6 +6,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("health", views.health),
     path("openapi.json", views.openapi),
+    path("docs/", views.swagger_docs),
     path("api/v1/api-keys", views.api_keys),
     path("api/v1/competitions", views.competitions),
     path("api/v1/competitions/<uuid:competition_id>", views.competition_detail),
