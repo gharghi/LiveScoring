@@ -1,4 +1,5 @@
 import json
+import multiprocessing as mp
 import os
 import secrets
 import tempfile
@@ -11,6 +12,28 @@ from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 
 from .models import ApiApplication, Competition, Task, TrackingPoint
+
+
+# Set only in short-lived scoring workers.  Pilot scoring is pure and does not
+# touch Django or PostgreSQL, so forked workers can safely share the compiled
+# task and parameters copy-on-write.
+_SCORE_TASK = None
+_SCORE_PARAMS = None
+_SCORE_NOW = 0.0
+
+
+def _init_score_worker(task, params, now):
+    global _SCORE_TASK, _SCORE_PARAMS, _SCORE_NOW
+    _SCORE_TASK, _SCORE_PARAMS, _SCORE_NOW = task, params, now
+
+
+def _score_pilot_worker(item):
+    pilot, fixes = item
+    from engine.score import project, score_pilot
+    project(_SCORE_TASK, fixes)
+    result = score_pilot(_SCORE_TASK, fixes, _SCORE_NOW, _SCORE_PARAMS)
+    result.pilot = pilot
+    return result
 
 
 def score_competition(comp, task_row=None):
@@ -28,9 +51,6 @@ def score_competition(comp, task_row=None):
     from engine.scoring import score_task
     from engine.rules.params import GapParams
     from engine.task import parse_xctsk
-    points = list(comp.tracking_points.filter(task=task_row).order_by("pilot_id", "timestamp", "id"))
-    if not points:
-        return None
     with tempfile.NamedTemporaryFile(mode="w", suffix=".xctsk") as fh:
         json.dump(task_row.settings["xctsk"], fh)
         fh.flush()
@@ -43,19 +63,85 @@ def score_competition(comp, task_row=None):
         leading_time_ratio=float(cfg.get("leading_time_ratio", 0.26)),
         ess_no_goal_time_factor=float(cfg.get("ess_no_goal_time_factor", 0.0)),
     )
-    by_pilot = {}
-    for p in points:
-        by_pilot.setdefault(p.pilot_id, {})[p.timestamp] = p
-    results = []
-    for pilot, rows in by_pilot.items():
-        fixes = [Fix(int(p.timestamp.timestamp()), p.latitude, p.longitude,
-                     int(p.altitude_baro or 0), int(p.altitude_gps or 0))
-                 for p in rows.values()]
-        fixes.sort(key=lambda f: f.t)
-        project(task, fixes)
-        result = score_pilot(task, fixes, fixes[-1].t, params)
-        result.pilot = pilot
-        results.append(result)
+    from django.db import connection
+
+    work = []
+
+    # Fetch and build the scorer input in one pass.  Going through Django model
+    # rows or even ORM values_list() is several seconds slower on large replay
+    # tasks because every timestamp becomes a Python datetime before we turn it
+    # straight back into an epoch.  The ORDER BY keeps duplicate timestamps
+    # adjacent; the pending-fix logic preserves the previous "latest row wins"
+    # behavior without building a per-pilot dict and sorting it again.
+    sql = """
+        SELECT pilot_id, EXTRACT(EPOCH FROM timestamp)::bigint, latitude,
+               longitude, COALESCE(altitude_baro, 0)::int,
+               COALESCE(altitude_gps, 0)::int
+        FROM live_api_trackingpoint
+        WHERE task_id = %s
+        ORDER BY pilot_id, timestamp, id
+    """
+    current_pilot = None
+    current_fixes = None
+    pending_epoch = None
+    pending_fix = None
+    with connection.cursor() as cursor:
+        cursor.execute(sql, [str(task_row.id)])
+        while True:
+            rows = cursor.fetchmany(20000)
+            if not rows:
+                break
+            for pilot, epoch, lat, lon, baro, gps in rows:
+                if pilot != current_pilot:
+                    if pending_fix is not None:
+                        current_fixes.append(pending_fix)
+                    if current_pilot is not None:
+                        work.append((current_pilot, current_fixes))
+                    current_pilot = pilot
+                    current_fixes = []
+                    pending_epoch = None
+                    pending_fix = None
+
+                fix = Fix(int(epoch), lat, lon, int(baro or 0), int(gps or 0))
+                if pending_epoch is None:
+                    pending_epoch = fix.t
+                    pending_fix = fix
+                elif fix.t == pending_epoch:
+                    pending_fix = fix
+                else:
+                    current_fixes.append(pending_fix)
+                    pending_epoch = fix.t
+                    pending_fix = fix
+
+    if pending_fix is not None:
+        current_fixes.append(pending_fix)
+    if current_pilot is not None:
+        work.append((current_pilot, current_fixes))
+    if not work:
+        return None
+
+    # score_pilot is CPU-bound Python, so threads cannot use the extra cores.
+    # Use a small fork pool per request.  The default is two workers because
+    # production runs two Gunicorn workers (2 x 2 = 4 cores); set
+    # LIVE_SCORING_SCORER_WORKERS=1 to disable parallel scoring safely.
+    scorer_workers = max(1, int(os.environ.get("LIVE_SCORING_SCORER_WORKERS", "1")))
+    now = max((fixes[-1].t for _, fixes in work if fixes), default=0)
+    if scorer_workers > 1 and len(work) > 1:
+        scorer_workers = min(scorer_workers, len(work))
+        try:
+            context = mp.get_context("fork")
+        except ValueError:
+            context = mp.get_context()
+        with context.Pool(scorer_workers, initializer=_init_score_worker,
+                          initargs=(task, params, now)) as pool:
+            results = pool.map(_score_pilot_worker, work)
+    else:
+        results = []
+        for pilot, fixes in work:
+            project(task, fixes)
+            result = score_pilot(task, fixes, now, params)
+            result.pilot = pilot
+            results.append(result)
     task_score = score_task(task, results, params, cfg.get("pilots_present"))
     return task, task_score, results
 
@@ -222,33 +308,54 @@ def manga_points(request, manga_id):
         return error("points must be a list of at most 5000 items")
     if data.get("event_id") and data["event_id"] != task.competition.external_event_id:
         return error("event_id does not match manga", 400)
-    accepted = duplicates = 0
+    # Parse the request once, then do one duplicate lookup and one bulk insert.
+    # The previous per-point exists()+create() loop made a 1,000-point batch
+    # perform roughly 2,000 database round trips before scoring even started.
+    parsed = []
+    keys = set()
     processed_epochs = []
+    for point in points:
+        try:
+            pilot = str(point["pilot_id"])
+            epoch = point.get("epoch", point.get("timestamp"))
+            timestamp = _epoch_datetime(epoch)
+            lat, lon = float(point["lat"]), float(point["lon"])
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                raise ValueError
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return error("each point requires pilot_id, epoch (or timestamp), lat and lon")
+        timestamp = timestamp.astimezone(timezone.utc)
+        key = (pilot, timestamp)
+        processed_epochs.append(int(timestamp.timestamp()))
+        if key in keys:
+            continue
+        keys.add(key)
+        parsed.append((pilot, timestamp, lat, lon, point))
+
+    existing = set()
+    if parsed:
+        pilots = {p[0] for p in parsed}
+        timestamps = {p[1] for p in parsed}
+        existing = set(TrackingPoint.objects.filter(
+            task=task, pilot_id__in=pilots, timestamp__in=timestamps
+        ).values_list("pilot_id", "timestamp"))
+    new_rows = []
+    for pilot, timestamp, lat, lon, point in parsed:
+        if (pilot, timestamp) in existing:
+            continue
+        fp = TrackingPoint.make_fingerprint(pilot, timestamp, lat, lon)
+        new_rows.append(TrackingPoint(
+            competition=task.competition, task=task, pilot_id=pilot,
+            event_id=str(point.get("event_id", "")), timestamp=timestamp,
+            latitude=lat, longitude=lon, altitude_gps=point.get("alt"),
+            source="volandoo", fingerprint=fp, raw=point))
     with transaction.atomic():
-        for point in points:
-            try:
-                pilot = str(point["pilot_id"])
-                # ``epoch`` is the sender's GPS-fix signature. ``timestamp``
-                # remains accepted for clients using the original contract.
-                epoch = point.get("epoch", point.get("timestamp"))
-                timestamp = _epoch_datetime(epoch)
-                lat, lon = float(point["lat"]), float(point["lon"])
-                if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-                    raise ValueError
-            except (KeyError, TypeError, ValueError, OverflowError):
-                return error("each point requires pilot_id, epoch (or timestamp), lat and lon")
-            # Integration identity is (pilot_id, GPS timestamp), independent of
-            # arrival batch, coordinates, cutoff watermark, or event_id.
-            if TrackingPoint.objects.filter(task=task, pilot_id=pilot, timestamp=timestamp).exists():
-                duplicates += 1
-                processed_epochs.append(int(timestamp.timestamp()))
-                continue
-            fp = TrackingPoint.make_fingerprint(pilot, timestamp, lat, lon)
-            TrackingPoint.objects.create(competition=task.competition, task=task, pilot_id=pilot,
-                event_id=str(point.get("event_id", "")), timestamp=timestamp, latitude=lat, longitude=lon,
-                altitude_gps=point.get("alt"), source="volandoo", fingerprint=fp, raw=point)
-            accepted += 1
-            processed_epochs.append(int(timestamp.timestamp()))
+        if new_rows:
+            TrackingPoint.objects.bulk_create(new_rows, batch_size=1000)
+    accepted = len(new_rows)
+    duplicates = len(points) - accepted
+    ingestion_ms = (time.perf_counter() - started_at) * 1000
+    scoring_started = time.perf_counter()
     try:
         classification = _live_classification(task.competition, task)
     except Exception as exc:
@@ -258,6 +365,8 @@ def manga_points(request, manga_id):
     return JsonResponse({"task_id": manga_id, "manga_id": manga_id, "received_cutoff_epoch": cutoff,
         "processed_epoch": processed_epoch, "status": "ok",
         "accepted": accepted, "duplicates": duplicates,
+        "ingestion_ms": round(ingestion_ms, 2),
+        "scoring_ms": round((time.perf_counter() - scoring_started) * 1000, 2),
         "processing_ms": round((time.perf_counter() - started_at) * 1000, 2),
         "classification": {"computed_at_epoch": cutoff or int(datetime.now(timezone.utc).timestamp()),
                             "ranking": classification["pilots"], "task_score": classification["task_score"]}})
