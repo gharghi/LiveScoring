@@ -1,49 +1,28 @@
 """S7F 12.3 / 12.3.1 — Leading points.  [step 10]
 
-    LeadingFactor = max(0, 1 - cuberoot( (LC - LCmin)^2 / sqrt(LCmin) ))
+    LeadingFactor = max(0, 1 - cuberoot( (LC - LCmin)^2 / LCmin ))
     LeadingPoints = LeadingFactor x availableLeading
 
 where LC is the pilot's leading coefficient and LCmin the smallest in the
 field, so the leader takes the whole pot and everyone else falls away from it.
-The LeadingFactor half is not in doubt. The LC half is.
+The LeadingFactor half is cross-checked against AirScore/GlideComp. The
+remaining published-result mismatch is in the LC/progress-curve behaviour used
+by SVL's HUMP_V2A output, not in nominal distance/time or point allocation.
 
 ================================================================================
-  *** THIS IS THE ONE ELEMENT KNOWN TO BE WRONG. READ BEFORE TRUSTING IT. ***
+  *** CURRENT STATUS AGAINST THE RFAE/SVL TASK-4 FIXTURE ***
 ================================================================================
 
-Against the officially published result for the reference task this module is
-out by a MEAN OF 18.1 POINTS PER PILOT, worst case 58, while every other
-element is within 0.4. It also puts the wrong pilot at LCmin.
+Two issues were separated on the 2026-08-07 RFAE task-4 fixture:
 
-How that was established, so it can be rechecked: because
-LeadingFactor = 1 - cuberoot((LC-LCmin)^2 / sqrt(LCmin)), the quantity
-(1 - factor)^1.5 is an AFFINE function of LC. So inverting the published
-leading points gives each pilot's official LC up to the unknown LCmin, and
-whichever candidate formula is a straight line against (1 - factor)^1.5 is the
-one the official used -- no need to know their LCmin. Over the 119 pilots with
-an uncensored factor:
-
-    candidate leading coefficient              r^2      LCmin pilot
-    ------------------------------------------------------------------
-    sum d*t*integral weight(done)   <- THIS   0.9523    1073  wrong
-    integral d dt / SS                        0.9537    0157  right
-    integral weight(done)*d dt / SS           0.9449    0157  right
-    integral d^1.5 dt / SS^1.5                0.9920    0157  right
-    integral d^2 dt / SS^2  (classic form)    0.9938    1073  wrong
-    integral d^3 dt / SS^3                    0.8904    1073  wrong
-
-The official's LCmin pilot must be 0157, who scored the entire pot. Two
-conclusions and only two: the implemented form is the WORST plausible
-candidate, and the right one is in the `integral d^k dt` family, unweighted,
-with k near 2.
-
-WHY IT HAS NOT BEEN REPLACED. Sweeping k continuously peaks at k = 1.8
-(r^2 = 0.9975), not at a round number, which is the signature of a model that
-is close but still misspecified -- and the fitted exponent is biased anyway,
-because this engine's own d(t) values are 0.42% short (VERIFICATION.md §5.4).
-Fitting a rule to one task's output and shipping it as verified is exactly the
-mistake that produced the optimiser bug in §4.1. What is needed is the S7F
-12.3.1 text, or a second task to fit against and a third to test on.
+* Using sqrt(LCmin) inside the cuberoot denominator was a real bug. The Code /
+  AirScore form is ((LC - LCmin) / sqrt(LCmin))^(2/3), which simplifies to
+  cuberoot((LC - LCmin)^2 / LCmin). That is what leading_factor() implements.
+* SVL's published page still awards materially lower leading points for many
+  pilots than this LC formula. The page reports Progress curve HUMP_V2A and
+  Best progress coefficient 1.41713; matching that exactly requires identifying
+  SVL's progress coefficient convention rather than fitting a scale to one
+  competition.
 
 ================================================================================
 
@@ -85,8 +64,6 @@ EXACTLY leading_coefficient(), asserted on 2,000 random tracks.
 """
 
 from __future__ import annotations
-
-import math
 
 
 # --- the weight function, [PG] S7F 12.3.1 --------------------------------
@@ -205,10 +182,10 @@ def leading_coefficient(samples, speed_distance_km: float,
 
 
 def leading_factor(lc: float, lc_min: float) -> float:
-    """LeadingFactor = max(0, 1 - cuberoot((LC - LCmin)^2 / sqrt(LCmin)))"""
+    """LeadingFactor = max(0, 1 - cuberoot((LC - LCmin)^2 / LCmin))."""
     if lc_min <= 0:
         return 0.0
-    x = (lc - lc_min) ** 2 / math.sqrt(lc_min)
+    x = (lc - lc_min) ** 2 / lc_min
     return max(0.0, 1.0 - x ** (1.0 / 3.0))
 
 

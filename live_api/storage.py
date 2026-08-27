@@ -240,17 +240,7 @@ def _latest_task_classification_postgres(task):
                 WHERE task_id = %s::uuid
                 ORDER BY rank, pilot_id
             """, [str(task.id)])
-            pilots = [{
-                "pilot_id": row[0],
-                "rank": row[1],
-                "state": row[2],
-                "score": row[3],
-                "distance_m": row[4],
-                "speed_kmh": row[5],
-                "ess": row[6],
-                "goal": row[7],
-                "position": _json_value(row[8]),
-            } for row in cursor.fetchall()]
+            pilots = [_scored_pilot_payload(row) for row in cursor.fetchall()]
             return {
                 "computed_at_epoch": computed_at,
                 "processed_epoch": scored_epoch,
@@ -323,17 +313,10 @@ def _latest_task_classification_postgres(task):
 def _latest_task_classification_orm(task):
     snapshot = getattr(task, "score_snapshot", None)
     if snapshot:
-        pilots = [{
-            "pilot_id": row.pilot_id,
-            "rank": row.rank,
-            "state": row.state,
-            "score": row.score,
-            "distance_m": row.distance_m,
-            "speed_kmh": row.speed_kmh,
-            "ess": row.ess,
-            "goal": row.goal,
-            "position": row.position,
-        } for row in task.pilot_score_snapshots.order_by("rank", "pilot_id")]
+        pilots = [_scored_pilot_payload((
+            row.pilot_id, row.rank, row.state, row.score, row.distance_m,
+            row.speed_kmh, row.ess, row.goal, row.position,
+        )) for row in task.pilot_score_snapshots.order_by("rank", "pilot_id")]
         return {
             "computed_at_epoch": int(snapshot.computed_at.timestamp()),
             "processed_epoch": snapshot.processed_epoch,

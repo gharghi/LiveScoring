@@ -44,7 +44,46 @@ def openapi(request):
         "TrackingPoint": {"type": "object", "required": ["pilot_id", "epoch", "lat", "lon", "alt"], "properties": {
             "pilot_id": {"type": "string"}, "epoch": {"type": "integer", "format": "int64", "description": "Unix epoch seconds; sender signature and GPS fix time."}, "timestamp": {"type": "integer", "format": "int64", "description": "Backward-compatible alias for epoch."},
             "lat": {"type": "number", "minimum": -90, "maximum": 90}, "lon": {"type": "number", "minimum": -180, "maximum": 180}, "alt": {"type": "number"}, "event_id": {"type": "string"}}},
-        "Classification": {"type": "object", "properties": {"computed_at_epoch": {"type": "integer", "format": "int64"}, "ranking": {"type": "array", "items": {"type": "object", "properties": {"pilot_id": {"type": "string"}, "category_id": {"type": "string"}, "rank": {"type": "integer"}, "state": {"type": "string"}, "score": {"type": "number"}, "distance_m": {"type": "number"}, "speed_kmh": {"type": "number", "nullable": True}, "ess": {"type": "boolean"}, "goal": {"type": "boolean"}, "position": {"type": "object", "properties": {"lat": {"type": "number"}, "lon": {"type": "number"}, "alt_m": {"type": "number", "nullable": True}, "next_waypoint_index": {"type": "integer", "nullable": True}, "next_waypoint": {"type": "string", "nullable": True}, "distance_to_next_m": {"type": "number", "nullable": True}, "distance_to_goal_m": {"type": "number", "nullable": True}, "progress_percent": {"type": "number", "nullable": True}}}}}}}},
+        "Classification": {"type": "object", "properties": {
+            "computed_at_epoch": {"type": "integer", "format": "int64", "nullable": True},
+            "processed_epoch": {"type": "integer", "format": "int64", "nullable": True},
+            "point_count": {"type": "integer"},
+            "status": {"type": "string"},
+            "task_score": {"type": "object", "nullable": True},
+            "timings": {"type": "object", "nullable": True},
+            "ranking": {"type": "array", "items": {"type": "object", "properties": {
+                "pilot_id": {"type": "string"},
+                "category_id": {"type": "string"},
+                "rank": {"type": "integer"},
+                "state": {"type": "string"},
+                "score": {"type": "number"},
+                "distance_m": {"type": "number"},
+                "speed_kmh": {"type": "number", "nullable": True},
+                "ess": {"type": "boolean"},
+                "goal": {"type": "boolean"},
+                "scoring": {"type": "object", "nullable": True, "properties": {
+                    "distance_points": {"type": "number"},
+                    "time_points": {"type": "number"},
+                    "leading_points": {"type": "number"},
+                    "total_points": {"type": "number"},
+                    "lc": {"type": "number"},
+                    "start_epoch": {"type": "number", "nullable": True},
+                    "start_cross_epoch": {"type": "number", "nullable": True},
+                    "ess_epoch": {"type": "number", "nullable": True},
+                    "goal_epoch": {"type": "number", "nullable": True}}},
+                "landing": {"type": "object", "nullable": True, "properties": {
+                    "detected": {"type": "boolean"},
+                    "epoch": {"type": "number", "nullable": True},
+                    "fix_index": {"type": "integer", "nullable": True}}},
+                "position": {"type": "object", "properties": {
+                    "lat": {"type": "number"},
+                    "lon": {"type": "number"},
+                    "alt_m": {"type": "number", "nullable": True},
+                    "next_waypoint_index": {"type": "integer", "nullable": True},
+                    "next_waypoint": {"type": "string", "nullable": True},
+                    "distance_to_next_m": {"type": "number", "nullable": True},
+                    "distance_to_goal_m": {"type": "number", "nullable": True},
+                    "progress_percent": {"type": "number", "nullable": True}}}}}}}},
     }
     event_body = {"type": "object", "required": ["schema_version", "event_id", "event_name", "sent_at", "formula", "categories", "pilots"], "properties": {
         "schema_version": {"type": "string"}, "event_id": {"type": "string"}, "event_name": {"type": "string"}, "sent_at": {"type": "string", "format": "date-time"},

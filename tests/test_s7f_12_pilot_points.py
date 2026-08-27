@@ -112,11 +112,20 @@ def run() -> list[tuple[str, bool, str]]:
                 f"200 random tracks, worst difference {worst:.3e}"))
 
     # --- 12.3.1 maxTime ---------------------------------------------------
-    out.append(("12.3.1 maxTime is lastESS, extended to a later landing",
-                max_time_for(9000.0, 10689.0, 12600.0) == 10689.0
-                and max_time_for(13000.0, 10689.0, 12600.0) == 13000.0,
-                "landed before lastESS → 10689 s; landed after → own landing "
-                "time, not the field maximum"))
+    old_rule = S12.MAX_TIME_RULE
+    try:
+        S12.MAX_TIME_RULE = "field"
+        field_ok = (max_time_for(9000.0, 10689.0, 12600.0) == 12600.0
+                    and max_time_for(13000.0, 10689.0, 12600.0) == 12600.0)
+        S12.MAX_TIME_RULE = "code"
+        code_ok = (max_time_for(9000.0, 10689.0, 12600.0) == 10689.0
+                   and max_time_for(13000.0, 10689.0, 12600.0) == 13000.0)
+    finally:
+        S12.MAX_TIME_RULE = old_rule
+    out.append(("12.3.1 maxTime default is field-wide, with code mode available",
+                S12.MAX_TIME_RULE == "field" and field_ok and code_ok,
+                "field mode → 12600 s for both pilots; code mode → lastESS or "
+                "own later landing"))
 
     # --- 12 rounding ------------------------------------------------------
     # Components are rounded to 1 dp FIRST, then summed and rounded again.
@@ -131,6 +140,13 @@ def run() -> list[tuple[str, bool, str]]:
     # --- 12.3 LeadingFactor ----------------------------------------------
     out.append(("12.3 LeadingFactor is exactly 1 at LCmin",
                 leading_factor(1.5, 1.5) == 1.0, "the leader takes the pot"))
+    # AirScore writes this as ((LC - LCmin) / sqrt(LCmin))^(2/3).
+    # GlideComp simplifies it to cbrt((LC - LCmin)^2 / LCmin). The historical
+    # bug used sqrt(LCmin) inside the cuberoot denominator, which this catches.
+    want = 1.0 - ((0.5 - 0.25) / math.sqrt(0.25)) ** (2.0 / 3.0)
+    out.append(("12.3 LeadingFactor denominator is LCmin after simplification",
+                abs(leading_factor(0.5, 0.25) - want) < 1e-15,
+                f"LC 0.5, LCmin 0.25 -> {leading_factor(0.5, 0.25):.12f}"))
     out.append(("12.3 LeadingFactor falls monotonically away from LCmin",
                 all(leading_factor(1.0 + i / 20, 1.0)
                     >= leading_factor(1.0 + (i + 1) / 20, 1.0) - 1e-15
@@ -167,6 +183,6 @@ def run() -> list[tuple[str, bool, str]]:
     # LC_SCALE is an experiment knob and must default to inert
     out.append(("12.3.1 LC_SCALE defaults to 1.0 — no fitted factor is applied",
                 S12.LC_SCALE == 1.0,
-                "a scale near 2 fits the published result, but fitting a "
-                "constant to one task is not verification"))
+                "the AirScore/GlideComp cross-check fixes LeadingFactor, "
+                "not LC scaling"))
     return out

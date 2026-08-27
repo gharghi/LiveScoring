@@ -16,59 +16,32 @@ sum of the unrounded parts, and it is what the published result does: Malecki's
 361.7 + 168.0 + 470.3 - 1.5 = 998.5 exactly.
 
 ================================================================================
-  12.3.1 SETTLED THE FORMULA AND LEFT A FACTOR OF ~2 UNEXPLAINED
+  LEADING FACTOR CROSS-CHECKED AGAINST AIRSCORE AND GLIDECOMP
 ================================================================================
 
-The leading coefficient was this engine's one element flagged as wrong. With
-12.3.1 in hand, the structure is CONFIRMED CORRECT — the formula implemented
-here is the formula in the Code, term for term. What remains is a scale.
+The 12.3.1 weighted leading coefficient is still normalised by
+1800 x speedSectionDistance. The bug that produced the old "factor near 2"
+symptom was one line later, in 12.3's LeadingFactor:
 
-  * Spearman rank correlation between this engine's LC ordering and the
-    official leading points: 0.9915 over 129 pilots. The order is right.
+    LeadingFactor = max(0, 1 - ((LC - LCmin) / sqrt(LCmin))^(2/3))
 
-  * But the SPREAD is too narrow. LeadingFactor is extremely sensitive near
-    LCmin, so a compressed LC range compresses the points: this engine gives
-    the last finisher ~62 leading points where the official gives 6.6.
-
-  * Fitting a single multiplier k on LC against the official result gives
-    k = 2.05 by regression (r^2 0.974) and k = 2.35 by minimising the points
-    error, which takes the mean error from 18.1 pt/pilot to 2.7.
-
-  * Corroboration from the Code itself: Figure 16 plots LeadingFactor for
-    LCmin = 1.0, 1.25, 1.5, 1.75, 2.0. This engine's LCmin on the reference
-    task is 0.468 — below the entire plotted range. At k = 2 it is 0.94, at the
-    bottom of it.
-
-Two candidate homes for the factor, neither confirmable from the text quoted:
-
-    a) the 1800 in the denominator being 900        -> exactly x2.000
-    b) weight() normalised to unit area             -> x1.485
-       (integral of weight over [0,1] = 0.673355, computed two ways)
-
-(a) matches the regression almost exactly. (b) does not.
-
-NO FACTOR IS APPLIED. Fitting a constant to one task's published output and
-shipping it as correct is the mistake that left the route optimiser 8.3% wrong
-through two separate bugs, and it would be worse here because it would look
-like agreement. What is needed is the sentence in 12.3.1 that defines the
-denominator, or a second competition to test a hypothesis against.
-
-Set LC_SCALE below to experiment. It defaults to 1.0.
+AirScore's Gap.pm uses that expression directly. GlideComp's gap-leading.ts
+simplifies it to cbrt((LC - LCmin)^2 / LCmin). This engine accidentally used
+cbrt((LC - LCmin)^2 / sqrt(LCmin)), which is too generous when LCmin < 1 and
+therefore compressed the leading-points spread.
 
 ================================================================================
   maxTime
 ================================================================================
 
-12.3.1: "The times used for this calculation are given in seconds from the
-first start gate time (as defined for the task), to the time when the last
-pilot reached ESS. For pilots who land out after the last pilot reached ESS,
-the calculation keeps going until they land."
+GlideComp resolves a single field-wide maxTime:
 
-So maxTime is the LAST ESS TIME, extended per pilot to their own landing if
-they came down later. The engine previously used a single field-wide
-max(last outlanding, last ESS) for everybody, which inflates missingArea for
-every pilot who landed before the slowest one. MAX_TIME_RULE selects; the
-default now follows the Code.
+    maxTime = min(max(lastOutlandingTime, lastESStime), taskDeadline)
+
+That is also the only mode that moves the RFAE/SVL task-4 fixture in the right
+direction. AirScore has historical per-pilot adjustment paths for landouts, so
+MAX_TIME_RULE remains selectable, but the default follows the field-wide
+interpretation used by GlideComp.
 """
 
 from __future__ import annotations
@@ -80,9 +53,9 @@ from .points_leading import (leading_factor, leading_from_partial,  # noqa: F401
 
 # --- policies -------------------------------------------------------------
 
-LC_SCALE = 1.0              # see the note above. 1.0 = the Code as written.
-MAX_TIME_RULE = "code"      # "code" = per-pilot max(lastESS, own landing)
-                            # "field" = the old field-wide max(lastOut, lastESS)
+LC_SCALE = 1.0              # see the note above. 1.0 = no fitted factor.
+MAX_TIME_RULE = "field"     # "field" = max(lastOut, lastESS), capped by deadline
+                            # "code" = per-pilot max(lastESS, own landing)
 
 
 def round1(x: float) -> float:
@@ -174,7 +147,7 @@ def time_points(pilot_time: float, best_time: float | None,
 # =========================================================================
 #
 #     LCmin           = min over all pilots who flew of LC_p
-#     LeadingFactor_p = max(0, 1 - cuberoot((LC_p - LCmin)^2 / sqrt(LCmin)))
+#     LeadingFactor_p = max(0, 1 - ((LC_p - LCmin) / sqrt(LCmin))^(2/3))
 #     LeadingPoints_p = LeadingFactor_p * AvailableLeadingPoints
 #
 # "Leading points are awarded to encourage pilots to start early and to reward
@@ -185,12 +158,8 @@ def time_points(pilot_time: float, best_time: float | None,
 # there. That identity is what lets LeadingTimeRatio be read back out of a
 # published result (see rules/s7f_11_allocation.Allocation).
 #
-# CHECK THIS: the denominator inside the cube root. The transcription of 12.3
-# available here is garbled around it — sqrt(LCmin) is what this engine uses
-# and what the surrounding text is consistent with, but LCmin^3 and a bare
-# LCmin are both readable in the source. Tested against the official result,
-# sqrt(LCmin) and cuberoot-of-LCmin are close and LCmin^3 is much worse; none
-# is decisive while the LC scale question above is open.
+# Equivalently: cuberoot((LC_p - LCmin)^2 / LCmin). Do not put sqrt(LCmin)
+# inside the cuberoot denominator; that was the historical bug.
 
 
 def leading_points(lc: float, lc_min: float, available_leading: float) -> float:
@@ -255,13 +224,10 @@ def max_time_for(pilot_last_task_time: float, last_ess_task_time: float,
                  field_max_task_time: float) -> float:
     """S7F 12.3.1 — the maxTime that goes into missingArea, for ONE pilot.
 
-    "to the time when the last pilot reached ESS. For pilots who land out after
-     the last pilot reached ESS, the calculation keeps going until they land."
-
-    So: the last ESS time, extended to this pilot's own landing if they came
-    down later. MAX_TIME_RULE == "field" restores the previous behaviour, a
-    single field-wide maximum applied to everyone, which inflates missingArea
-    for every pilot who landed before the slowest one.
+    MAX_TIME_RULE == "field" follows GlideComp's field-wide interpretation:
+    max(last outlanding, last ESS), capped by the task deadline before this
+    function is called. MAX_TIME_RULE == "code" keeps the stricter per-pilot
+    reading: last ESS, extended only for a pilot whose own landing came later.
     """
     if MAX_TIME_RULE == "field":
         return field_max_task_time

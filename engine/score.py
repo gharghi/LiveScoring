@@ -13,6 +13,7 @@ assertion instead of something discovered during a protest.
 from __future__ import annotations
 
 import math
+import bisect
 from dataclasses import dataclass, field
 
 from .gap import GapParams
@@ -27,6 +28,18 @@ WAITING, AIRBORNE, STARTED, ESS_DONE, GOAL_DONE = "WAITING", "AIRBORNE", "STARTE
 NOT_STARTED = "NO START"   # launched, but never made a valid SSS crossing
 
 TAKEOFF_RADIUS = 200.0     # m from first fix before we call it airborne
+
+# S7F 12.1 scores distance only "up until the pilot landed or the task
+# deadline was reached, whichever comes first." IGC/live trackers often keep
+# recording after landing; without a cutoff the engine can score retrieve-car
+# movement. This detector is deliberately conservative: it requires three
+# minutes inside a small horizontal/vertical box after the pilot has actually
+# started the task.
+LANDING_WINDOW_S = 180
+LANDING_RADIUS_M = 100.0
+LANDING_ALTITUDE_RANGE_M = 80.0
+LANDING_SCAN_STEP_S = 5
+LANDING_AFTER_START_DELAY_S = 60
 
 # Each candidate start costs a full replay of the pilot's track. A task whose
 # SSS is re-crossed during the course can generate dozens; evaluating all of
@@ -89,6 +102,7 @@ class PilotResult:
     last_lon: float = 0.0
     last_alt: int = 0
     fixes_used: int = 0
+    landing_time: float | None = None
 
     # Audit anchors. These are indices into the pilot's own point list, so a
     # protest can be answered by naming the fix that decided the number rather
@@ -97,6 +111,7 @@ class PilotResult:
     # present, not only when tracing.
     dist_fix_index: int = -1        # the fix that set the scored distance
     start_fix_index: int = -1       # the fix whose timestamp is the start
+    landing_fix_index: int = -1     # first fix of the stationary landing window
     tag_fix_index: list[int] = field(default_factory=list)
 
     @property
@@ -153,23 +168,49 @@ def remaining_to_goal(task: CompiledTask, f: Fix, next_wp: int) -> float:
                                   task.remaining[next_wp])
 
 
+def _segment_reaches_radius(ax: float, ay: float, bx: float, by: float,
+                            cx: float, cy: float, radius: float) -> bool:
+    """Whether segment AB intersects or touches the circle/disc around C.
+
+    The common endpoint-inside cases are handled by callers that already have
+    d0/d1 for other work. This catches the remaining telemetry-gap case: both
+    fixes are outside the cylinder, but the straight segment between them
+    passes through it.
+    """
+    dx = bx - ax
+    dy = by - ay
+    l2 = dx * dx + dy * dy
+    if l2 <= 1e-18:
+        return False
+    u = ((cx - ax) * dx + (cy - ay) * dy) / l2
+    if u <= 0.0 or u >= 1.0:
+        return False
+    qx = ax + u * dx
+    qy = ay + u * dy
+    return (qx - cx) * (qx - cx) + (qy - cy) * (qy - cy) <= radius * radius
+
+
 def _first_validation(task, fixes, wp_index: int, now: float) -> float | None:
     """When the pilot first entered a control zone, ignoring task order."""
     w = task.waypoints[wp_index]
     wx, wy, w_out = w.x, w.y, w.outer
     hypot = math.hypot
     first = True
+    prev = None
     d0 = 0.0
     for f in fixes:
         if f.t > now:
             break
         d1 = hypot(f.x - wx, f.y - wy)
-        # Same reduction as the other two loops: a transition across either
-        # boundary, or being inside the outer one, holds exactly when either
-        # end of the segment is within the outer boundary.
-        if not first and (d1 <= w_out or d0 <= w_out):
+        # Validate when either endpoint is inside the tolerance zone, or when
+        # a telemetry gap jumps across the zone between two outside endpoints.
+        if (not first
+                and (d1 <= w_out or d0 <= w_out
+                     or _segment_reaches_radius(prev.x, prev.y, f.x, f.y,
+                                                wx, wy, w_out))):
             return float(f.t)
         d0 = d1
+        prev = f
         first = False
     return None
 
@@ -244,11 +285,17 @@ def _run_from_start(task, fixes, i0, start_cross_t, now, alt_gps=True, trace=Non
         if w is not None:
             d1 = hypot(fx - wx, fy - wy)
             # A crossing is a transition across either tolerance boundary in
-            # either direction (S7F 9.2.1); being inside the outer boundary at
-            # this fix validates too, which together reduce to "either end of
-            # the segment is within the outer boundary".
+            # either direction (S7F 9.2.1). Being inside the outer boundary at
+            # either endpoint validates too. Finally, a telemetry gap can have
+            # both endpoints outside while the segment between them passes
+            # through the cylinder; that validates at the later fix timestamp,
+            # preserving the engine's no-interpolated-scoring-time rule.
             inside = d1 <= w_out
-            if inside or d0 <= w_out:
+            segment_only = (
+                not inside and d0 > w_out
+                and _segment_reaches_radius(prev.x, prev.y, fx, fy, wx, wy, w_out)
+            )
+            if inside or d0 <= w_out or segment_only:
                 # Label only — the validation above is what scores. A crossing
                 # is a transition across either boundary; being inside the outer
                 # boundary with no transition means the boundary event itself
@@ -257,6 +304,7 @@ def _run_from_start(task, fixes, i0, start_cross_t, now, alt_gps=True, trace=Non
                 transition = (((d0 < w_in) != (d1 < w_in))
                               or ((d0 <= w_out) != (d1 <= w_out)))
                 how = ("boundary crossing" if transition
+                       else "segment crossing" if segment_only
                        else "inside zone, no boundary event")
                 outward = d1 > d0
                 t_cross = float(ft)
@@ -336,8 +384,9 @@ def _run_from_start(task, fixes, i0, start_cross_t, now, alt_gps=True, trace=Non
     }
 
 
-def score_pilot(task: CompiledTask, fixes: list[Fix], now: float,
-                params: GapParams, trace: dict | None = None) -> PilotResult:
+def _score_pilot_core(task: CompiledTask, fixes: list[Fix], now: float,
+                      params: GapParams,
+                      trace: dict | None = None) -> PilotResult:
     """Derive a pilot's complete task state from their point list.
 
     Pure: no clock, no I/O, no globals. Given the same points, the same `now`
@@ -402,12 +451,20 @@ def score_pilot(task: CompiledTask, fixes: list[Fix], now: float,
             # not consult it. Gating the start on direction makes tasks whose
             # declared direction is wrong -- or whose first turnpoint sits
             # inside the start cylinder -- score as "nobody started".
-            # geo.zone_crossing inlined — see the note in _run_from_start. Note
-            # this is the strict TRANSITION test, with no "already inside"
+            # geo.zone_crossing inlined — see the note in _run_from_start.
+            # This is still a strict event test, with no "already inside"
             # fallback: a pilot orbiting inside the SSS must not generate a
-            # candidate start on every fix.
+            # candidate start on every fix. The segment-only case handles
+            # telemetry gaps whose endpoints are both outside but whose segment
+            # crosses the cylinder.
             d1 = hypot(fx - sx, fy - sy)
-            if ((d0 < s_in) != (d1 < s_in)) or ((d0 <= s_out) != (d1 <= s_out)):
+            transition = (((d0 < s_in) != (d1 < s_in))
+                          or ((d0 <= s_out) != (d1 <= s_out)))
+            segment_only = (
+                not transition and d0 > s_out and d1 > s_out
+                and _segment_reaches_radius(prev.x, prev.y, fx, fy, sx, sy, s_out)
+            )
+            if transition or segment_only:
                 t_cross = float(ft)
                 after_gate = t_cross >= first_gate
                 if after_gate:
@@ -418,6 +475,7 @@ def score_pilot(task: CompiledTask, fixes: list[Fix], now: float,
                     trace.setdefault("sss_crossings", []).append({
                         "fix": i, "t": t_cross, "outward": d1 > d0,
                         "after_gate": after_gate,
+                        "segment_only": segment_only,
                         "d_prev": d0, "d_fix": d1,
                         "lat": f.lat, "lon": f.lon,
                         "alt_gps": f.alt_gps, "alt_baro": f.alt_baro,
@@ -537,3 +595,113 @@ def score_pilot(task: CompiledTask, fixes: list[Fix], now: float,
         if r.speed_section_time > 0:
             r.speed = task.speed_distance / r.speed_section_time * 3.6
     return r
+
+
+def _detect_landing_cutoff(fixes: list[Fix], after: float,
+                           before: float) -> tuple[float, int] | None:
+    """Return the first fix of a sustained stationary window, if one exists.
+
+    This is not an aircraft-state classifier. It is a scoring guardrail for
+    final/live feeds that continue after landing. A candidate is accepted only
+    when every fix for LANDING_WINDOW_S seconds stays within LANDING_RADIUS_M
+    of the window anchor and the GPS-altitude range stays below
+    LANDING_ALTITUDE_RANGE_M.
+    """
+    if not fixes or before <= after:
+        return None
+
+    times = [f.t for f in fixes]
+    start = bisect.bisect_left(times, int(after))
+    end = bisect.bisect_right(times, int(before))
+    if end - start < 2:
+        return None
+
+    radius2 = LANDING_RADIUS_M * LANDING_RADIUS_M
+    i = start
+    while i < end:
+        f0 = fixes[i]
+        j = bisect.bisect_left(times, f0.t + LANDING_WINDOW_S, i, end)
+        if j >= end:
+            return None
+
+        min_alt = max_alt = f0.alt_gps
+        x0, y0 = f0.x, f0.y
+        stationary = True
+        for k in range(i, j + 1):
+            f = fixes[k]
+            if f.alt_gps < min_alt:
+                min_alt = f.alt_gps
+            elif f.alt_gps > max_alt:
+                max_alt = f.alt_gps
+            if (max_alt - min_alt > LANDING_ALTITUDE_RANGE_M
+                    or (f.x - x0) * (f.x - x0) + (f.y - y0) * (f.y - y0) > radius2):
+                stationary = False
+                break
+        if stationary:
+            return float(f0.t), i
+
+        next_t = f0.t + LANDING_SCAN_STEP_S
+        ni = bisect.bisect_left(times, next_t, i + 1, end)
+        i = ni if ni > i else i + 1
+    return None
+
+
+def _score_until_landing_if_needed(task: CompiledTask, fixes: list[Fix],
+                                   now: float, params: GapParams,
+                                   initial: PilotResult,
+                                   trace: dict | None = None) -> PilotResult:
+    if initial.goal_time is not None:
+        return initial
+
+    if initial.start_cross_time is not None:
+        after = initial.start_cross_time + LANDING_AFTER_START_DELAY_S
+    elif initial.takeoff_time is not None:
+        after = initial.takeoff_time + LANDING_AFTER_START_DELAY_S
+    else:
+        return initial
+
+    before = min(float(now), float(initial.last_t or now))
+    landing = _detect_landing_cutoff(fixes, after, before)
+    if landing is None:
+        return initial
+
+    landing_time, landing_index = landing
+    if landing_time >= now:
+        return initial
+
+    # Replay the exact same state machine with the scoring clock cut at the
+    # landing time. The first pass only decides whether a landing cutoff is
+    # needed; all scored fields come from this final pass.
+    final = _score_pilot_core(task, fixes, landing_time, params, trace)
+    final.landing_time = landing_time
+    final.landing_fix_index = landing_index
+    if trace is not None:
+        trace["landing"] = {
+            "fix": landing_index,
+            "t": landing_time,
+            "window_s": LANDING_WINDOW_S,
+            "radius_m": LANDING_RADIUS_M,
+            "altitude_range_m": LANDING_ALTITUDE_RANGE_M,
+        }
+    return final
+
+
+def score_pilot(task: CompiledTask, fixes: list[Fix], now: float,
+                params: GapParams, trace: dict | None = None) -> PilotResult:
+    """Derive a pilot's complete task state from their point list.
+
+    This wraps the pure state-machine pass with the S7F landing cutoff. Goal
+    pilots are returned from the first pass; non-goal pilots are replayed to the
+    detected landing time when their track keeps recording afterwards.
+    """
+    if trace is None:
+        initial = _score_pilot_core(task, fixes, now, params, None)
+        return _score_until_landing_if_needed(task, fixes, now, params, initial)
+
+    # Keep trace deterministic: first decide the cutoff without recording
+    # events, then record only the final scored pass.
+    initial = _score_pilot_core(task, fixes, now, params, None)
+    final = _score_until_landing_if_needed(task, fixes, now, params, initial, trace)
+    if final is initial:
+        return _score_pilot_core(task, fixes, now, params, trace)
+    return final

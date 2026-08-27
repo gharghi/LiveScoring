@@ -82,10 +82,9 @@ def score_task(task: CompiledTask, results: list[PilotResult], params: GapParams
 
     # --- leading coefficient (S7F 12.3.1) ---
     # maxTime = min(max(lastOutlanding, lastESS), taskDeadline), as task time.
-    # S7F 12.3.1 — maxTime is "the time when the last pilot reached ESS", and
-    # for a pilot who lands out after that, "the calculation keeps going until
-    # they land". So it is PER PILOT, not one field-wide maximum applied to
-    # everybody. rules/s7f_12_pilot_points.max_time_for().
+    # rules/s7f_12_pilot_points.max_time_for() keeps this selectable because
+    # AirScore and GlideComp differ in their historical landout handling, but
+    # the default follows GlideComp's field-wide interpretation.
     last_out = max((r.last_task_time for r in flying if r.start_time), default=0.0)
     last_ess = max((r.ess_time - task.first_gate for r in flying if r.ess_time), default=0.0)
     ts.max_time = max(last_out, last_ess)

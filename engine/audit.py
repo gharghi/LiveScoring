@@ -313,11 +313,11 @@ def points_derivation(task: CompiledTask, r: PilotResult, ts: TaskScore,
     if r.lc > 0 and ts.lc_min > 0:
         lf = gap.leading_factor(r.lc, ts.lc_min)
         num = (r.lc - ts.lc_min) ** 2
-        den = math.sqrt(ts.lc_min)
+        den = ts.lc_min
         lp = lf * a.available_leading
         out.append({
             "part": "leadingFactor", "ref": "S7F 12.3",
-            "formula": "max(0, 1 − ∛((LC − LCmin)² / √LCmin))",
+            "formula": "max(0, 1 − ∛((LC − LCmin)² / LCmin))",
             "substituted": f"LC {r.lc:.6f}, LCmin {ts.lc_min:.6f}  →  "
                            f"({num:.6f} / {den:.6f})^(1/3) = {(num/den)**(1/3):.6f}"
                            f"  →  {lf:.6f}",
