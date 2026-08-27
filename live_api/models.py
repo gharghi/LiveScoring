@@ -58,3 +58,42 @@ class TrackingPoint(models.Model):
     def make_fingerprint(pilot_id, timestamp, latitude, longitude):
         value = f"{pilot_id}|{timestamp.isoformat()}|{latitude:.7f}|{longitude:.7f}"
         return hashlib.sha256(value.encode()).hexdigest()
+
+
+class TaskResultSnapshot(models.Model):
+    task = models.OneToOneField(Task, on_delete=models.CASCADE, related_name="score_snapshot")
+    competition = models.ForeignKey(Competition, on_delete=models.CASCADE, related_name="task_score_snapshots")
+    computed_at = models.DateTimeField(auto_now=True)
+    processed_epoch = models.BigIntegerField(null=True, blank=True)
+    point_count = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=20, default="pending")
+    task_score = models.JSONField(default=dict)
+    timings = models.JSONField(default=dict)
+    error = models.TextField(blank=True, default="")
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["competition", "computed_at"], name="task_score_comp_time_idx"),
+        ]
+
+
+class PilotScoreSnapshot(models.Model):
+    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name="pilot_score_snapshots")
+    pilot_id = models.CharField(max_length=200)
+    rank = models.PositiveIntegerField()
+    state = models.CharField(max_length=40)
+    score = models.FloatField(default=0)
+    distance_m = models.FloatField(default=0)
+    speed_kmh = models.FloatField(null=True, blank=True)
+    ess = models.BooleanField(default=False)
+    goal = models.BooleanField(default=False)
+    position = models.JSONField(default=dict)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["task", "pilot_id"], name="pilot_score_task_pilot_uniq"),
+        ]
+        indexes = [
+            models.Index(fields=["task", "rank"], name="pilot_score_task_rank_idx"),
+        ]

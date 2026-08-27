@@ -46,11 +46,32 @@ The canonical event and snapshot contracts, idempotency rules, replay behaviour
 and future-provider boundary are specified in [ARCHITECTURE.md](ARCHITECTURE.md).
 The corresponding diagram is [live-scoring-architecture.drawio](live-scoring-architecture.drawio).
 
+### Replay directly from an RFAE competition page
+
+For a persistent download and comparison report use the standalone
+`rfae_replay.py` (the older `feed_task.py --source-url` mode remains available):
+
+```bash
+./.venv/bin/python rfae_replay.py \
+  --url https://scoring.rfae.es/campeonato-sport/ --task 4 \
+  --download-dir rfae_downloads --api-key "$LS_API_KEY" \
+  --speed 300 --batch-seconds 15
+```
+
+The downloader accepts the site's expired certificate because this is an
+explicit public source URL. Use `--dry-run` to download and validate without
+sending. Each run stores the HTML, task, IGCs, metadata and comparison report.
+
 ## Frontend API and SQLite snapshots
 
 > Production API note: the deployed service is now the Django/PostgreSQL API
 > described in [DJANGO_API.md](DJANGO_API.md). The FastAPI/SQLite service below
 > remains a local replay/demo tool.
+
+In production the Django API and scorer are separate processes. Django ingests
+points and reads PostgreSQL snapshots; `score_worker.py` performs the scoring
+loop outside the request path and writes the latest task/pilot results back to
+PostgreSQL.
 
 The FastAPI delivery service tails the same canonical event log, recalculates
 the current board, and persists a `live-score.v1` snapshot in SQLite every
@@ -497,3 +518,20 @@ Stopped tasks (S7F 10.4 and 13.4) and FTV (16) — `./run.py --rules` lists them
 and `engine/rules/stopped.py` and `ftv.py` describe what each would involve
 rather than being absent. The incremental path and degradation harness
 (Phase 6); ingestion, Redis, persistence, fan-out (Phases 8–10).
+
+## RFAE live replay
+
+`rfae_replay.py` downloads the RFAE index, task HTML, generated XCTrack task
+and every linked IGC into a timestamped directory, creates an isolated event
+and task on the API, replays fixes in live-like batches, then compares the API
+leaderboard with the published task results.
+
+```bash
+LS_API_KEY=$(cat .ls_api_key) .venv/bin/python rfae_replay.py \
+  --url https://scoring.rfae.es/campeonato-sport/ --task 4 \
+  --download-dir rfae_downloads --base-url https://ls.buildmycabin.com \
+  --speed 300 --batch-seconds 15
+```
+
+Use `--dry-run` to only download and validate the source. Each run writes
+`metadata.json`, `task.xctsk`, `igc/`, and `comparison.json`.

@@ -6,7 +6,7 @@ from django.shortcuts import get_object_or_404, render
 from django.urls import path, reverse
 from django.utils.html import format_html
 
-from .models import ApiApplication, Competition, Task, TrackingPoint
+from .models import ApiApplication, Competition, PilotScoreSnapshot, Task, TaskResultSnapshot, TrackingPoint
 
 
 @admin.register(ApiApplication)
@@ -66,4 +66,21 @@ class TrackingPointAdmin(admin.ModelAdmin):
     list_filter = ("source",)
     search_fields = ("pilot_id", "event_id", "fingerprint")
     readonly_fields = [field.name for field in TrackingPoint._meta.fields]
+    list_per_page = 100
+
+
+@admin.register(TaskResultSnapshot)
+class TaskResultSnapshotAdmin(admin.ModelAdmin):
+    list_display = ("task", "competition", "status", "processed_epoch", "point_count", "computed_at")
+    list_filter = ("status",)
+    search_fields = ("task__name", "task__external_manga_id", "competition__name", "error")
+    readonly_fields = [field.name for field in TaskResultSnapshot._meta.fields]
+
+
+@admin.register(PilotScoreSnapshot)
+class PilotScoreSnapshotAdmin(admin.ModelAdmin):
+    list_display = ("task", "pilot_id", "rank", "state", "score", "distance_m", "updated_at")
+    list_filter = ("state", "ess", "goal")
+    search_fields = ("pilot_id", "task__name", "task__external_manga_id")
+    readonly_fields = [field.name for field in PilotScoreSnapshot._meta.fields]
     list_per_page = 100

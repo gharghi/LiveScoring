@@ -1,7 +1,10 @@
 # Django/PostgreSQL API
 
-The production API is Django-backed and uses PostgreSQL. All protected
-requests send `X-API-Key: <key>` (Bearer tokens are also accepted).
+The production API is Django-backed and uses PostgreSQL. Django handles API
+authentication, configuration, point ingestion and result reads. Score
+calculation runs in the separate `score_worker.py` process and writes result
+snapshots back to PostgreSQL. All protected requests send `X-API-Key: <key>`
+(Bearer tokens are also accepted).
 
 ## Django admin
 
@@ -65,8 +68,9 @@ Each task update receives a new task UUID and monotonically increasing version.
 
 Send one point or a batch. Batches are limited to 5,000 points per request.
 The server accepts partial uploads, missing intervals, late points, points out
-of order, and duplicates. Every received row is retained for audit. The
-response reports duplicate fingerprints but does not discard the duplicate.
+of order, and duplicates. Duplicate `(pilot_id, epoch)` points are acknowledged
+but not inserted again into the hot tracking table. The scorer reads the full
+task history from PostgreSQL and writes the latest classification snapshot.
 
 ```http
 POST /api/v1/competitions/{competition_id}/tracking
@@ -80,18 +84,40 @@ Content-Type: application/json
 ]}
 ```
 
-`event_id` is retained as a source identifier. Duplicate detection uses the
-stable tuple `(pilot_id, timestamp, latitude, longitude)`, allowing retries
-without rejecting the request.
+`event_id` is retained as a source identifier. Duplicate detection uses
+`(task_id, pilot_id, epoch)`, allowing retries without rejecting the request.
+The response includes `processed_epoch` for ingestion and `scored_epoch` for
+the most recent classification snapshot.
 
 ## 5. Read current data
 
 - `GET /api/v1/competitions/{id}` — competition settings and task versions.
-- `GET /api/v1/competitions/{id}/results` — latest point and received count per pilot.
+- `GET /api/v1/competitions/{id}/results` — latest scorer snapshot for the latest task.
+- `GET /tasks/{task_id}/results` — latest scorer snapshot for one task.
 - `GET /health` — service health.
 - `GET /openapi.json` — machine-readable endpoint summary.
 
-The current ingestion results endpoint is deliberately independent of transport
-batch boundaries. A scoring worker can consume the same PostgreSQL rows later,
-replay them in timestamp order, and produce final GAP results without changing
-the ingestion contract.
+The current ingestion endpoint is deliberately independent of transport batch
+boundaries. It returns the latest stored classification immediately; the
+classification may lag by the scorer interval while new points are being
+processed.
+
+## 6. Run the scorer worker
+
+For one scoring pass:
+
+```bash
+set -a
+. /etc/livescoring.env
+set +a
+/srv/livescoring/venv/bin/python /srv/livescoring/score_worker.py --once
+```
+
+For continuous live scoring:
+
+```bash
+/srv/livescoring/venv/bin/python /srv/livescoring/score_worker.py --interval 1
+```
+
+Production runs this as `livescoring-scorer.service`. The Django API remains
+responsive while the worker catches up.
