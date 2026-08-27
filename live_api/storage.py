@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from django.db import connection, transaction
 
-from .models import TrackingPoint
+from .models import TaskIngestionState, TrackingPoint
 
 
 def _json_value(value):
@@ -110,6 +110,28 @@ def _insert_task_points_postgres(task, rows, received_count, processed_epochs):
                   AND p.pilot_id = b.pilot_id
                   AND p.timestamp = to_timestamp(b.epoch)
             )
+            RETURNING EXTRACT(EPOCH FROM timestamp)::bigint AS epoch
+        ),
+        inserted_stats AS (
+            SELECT COUNT(*)::integer AS accepted, MAX(epoch)::bigint AS latest_epoch
+            FROM inserted
+        ),
+        state_upsert AS (
+            INSERT INTO live_api_taskingestionstate (
+                task_id, competition_id, latest_epoch, point_count, dirty, updated_at
+            )
+            SELECT %s::uuid, %s::uuid, latest_epoch, accepted, (accepted > 0), now()
+            FROM inserted_stats
+            WHERE accepted > 0
+            ON CONFLICT (task_id) DO UPDATE SET
+                competition_id = EXCLUDED.competition_id,
+                latest_epoch = GREATEST(
+                    COALESCE(live_api_taskingestionstate.latest_epoch, EXCLUDED.latest_epoch),
+                    EXCLUDED.latest_epoch
+                ),
+                point_count = live_api_taskingestionstate.point_count + EXCLUDED.point_count,
+                dirty = true,
+                updated_at = now()
             RETURNING 1
         )
         SELECT COUNT(*) FROM inserted
@@ -120,6 +142,8 @@ def _insert_task_points_postgres(task, rows, received_count, processed_epochs):
             str(task.competition_id),
             str(task.id),
             str(task.id),
+            str(task.id),
+            str(task.competition_id),
         ])
         accepted = int(cursor.fetchone()[0])
     return {
@@ -172,6 +196,14 @@ def _insert_task_points_orm(task, rows, received_count, processed_epochs):
     with transaction.atomic():
         if new_rows:
             TrackingPoint.objects.bulk_create(new_rows, batch_size=1000)
+            state, _created = TaskIngestionState.objects.get_or_create(
+                task=task, defaults={"competition": task.competition}
+            )
+            state.competition = task.competition
+            state.latest_epoch = max(processed_epochs, default=state.latest_epoch)
+            state.point_count += len(new_rows)
+            state.dirty = True
+            state.save(update_fields=["competition", "latest_epoch", "point_count", "dirty", "updated_at"])
     return {
         "accepted": len(new_rows),
         "duplicates": received_count - len(new_rows),

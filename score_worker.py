@@ -41,7 +41,7 @@ def scoreable_tasks(conn, task_filter=None, force=False):
     filters = [
         "t.settings ? 'xctsk'",
         "t.settings ? 'date_epoch'",
-        "COALESCE(stats.point_count, 0) > 0",
+        "state.point_count > 0",
     ]
     if task_filter:
         filters.append("(t.id::text = %s OR t.external_manga_id = %s)")
@@ -49,9 +49,11 @@ def scoreable_tasks(conn, task_filter=None, force=False):
     if not force:
         filters.append("""
             (
+                state.dirty
+                OR
                 snapshot.task_id IS NULL
-                OR snapshot.processed_epoch IS DISTINCT FROM stats.max_epoch
-                OR snapshot.point_count IS DISTINCT FROM stats.point_count
+                OR snapshot.processed_epoch IS DISTINCT FROM state.latest_epoch
+                OR snapshot.point_count IS DISTINCT FROM state.point_count
                 OR snapshot.status <> 'ok'
             )
         """)
@@ -59,18 +61,13 @@ def scoreable_tasks(conn, task_filter=None, force=False):
     sql = f"""
         SELECT t.id::text, t.external_manga_id, t.settings,
                c.id::text, c.settings,
-               stats.point_count, stats.max_epoch
+               state.point_count, state.latest_epoch
         FROM live_api_task t
         JOIN live_api_competition c ON c.id = t.competition_id
-        LEFT JOIN LATERAL (
-            SELECT COUNT(*)::integer AS point_count,
-                   EXTRACT(EPOCH FROM MAX(timestamp))::bigint AS max_epoch
-            FROM live_api_trackingpoint p
-            WHERE p.task_id = t.id
-        ) stats ON true
+        JOIN live_api_taskingestionstate state ON state.task_id = t.id
         LEFT JOIN live_api_taskresultsnapshot snapshot ON snapshot.task_id = t.id
         WHERE {' AND '.join(filters)}
-        ORDER BY stats.max_epoch NULLS LAST, t.created_at
+        ORDER BY state.updated_at, t.created_at
     """
     with conn.cursor() as cur:
         cur.execute(sql, params)
@@ -242,6 +239,13 @@ def save_success(conn, task_id, competition_id, processed_epoch, point_count, ta
                         position jsonb
                     )
                 """, [task_id, pilots_json])
+            cur.execute("""
+                UPDATE live_api_taskingestionstate
+                SET dirty = false, updated_at = now()
+                WHERE task_id = %s::uuid
+                  AND latest_epoch = %s
+                  AND point_count = %s
+            """, [task_id, processed_epoch, point_count])
 
 
 def save_error(conn, task_id, competition_id, point_count, processed_epoch, error, timings):
@@ -277,8 +281,11 @@ def score_one(conn, record):
         timings["task_compile_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
         t0 = time.perf_counter()
-        work, point_count, processed_epoch = load_work(conn, task_id)
+        work, scoring_point_count, scoring_epoch = load_work(conn, task_id)
+        point_count = _stored_count or scoring_point_count
+        processed_epoch = _stored_epoch or scoring_epoch
         timings["db_fetch_build_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+        timings["scoring_point_count"] = scoring_point_count
         if not work:
             return {"task": external_id or task_id, "status": "empty", "point_count": 0}
 

@@ -97,3 +97,17 @@ class PilotScoreSnapshot(models.Model):
         indexes = [
             models.Index(fields=["task", "rank"], name="pilot_score_task_rank_idx"),
         ]
+
+
+class TaskIngestionState(models.Model):
+    task = models.OneToOneField(Task, on_delete=models.CASCADE, related_name="ingestion_state")
+    competition = models.ForeignKey(Competition, on_delete=models.CASCADE, related_name="task_ingestion_states")
+    latest_epoch = models.BigIntegerField(null=True, blank=True)
+    point_count = models.PositiveIntegerField(default=0)
+    dirty = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["dirty", "updated_at"], name="task_ingest_dirty_idx"),
+        ]

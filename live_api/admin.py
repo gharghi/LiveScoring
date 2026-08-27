@@ -6,7 +6,10 @@ from django.shortcuts import get_object_or_404, render
 from django.urls import path, reverse
 from django.utils.html import format_html
 
-from .models import ApiApplication, Competition, PilotScoreSnapshot, Task, TaskResultSnapshot, TrackingPoint
+from .models import (
+    ApiApplication, Competition, PilotScoreSnapshot, Task,
+    TaskIngestionState, TaskResultSnapshot, TrackingPoint,
+)
 
 
 @admin.register(ApiApplication)
@@ -84,3 +87,11 @@ class PilotScoreSnapshotAdmin(admin.ModelAdmin):
     search_fields = ("pilot_id", "task__name", "task__external_manga_id")
     readonly_fields = [field.name for field in PilotScoreSnapshot._meta.fields]
     list_per_page = 100
+
+
+@admin.register(TaskIngestionState)
+class TaskIngestionStateAdmin(admin.ModelAdmin):
+    list_display = ("task", "competition", "dirty", "latest_epoch", "point_count", "updated_at")
+    list_filter = ("dirty",)
+    search_fields = ("task__name", "task__external_manga_id", "competition__name")
+    readonly_fields = [field.name for field in TaskIngestionState._meta.fields]
