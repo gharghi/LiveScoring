@@ -550,7 +550,12 @@ def check_distance_to_goal_reference(task, tracks, params, now) -> Check:
                 break
             w = task.waypoints[next_wp]
             ref = remaining_to_goal(task, f, next_wp)
-            inline = math.hypot(f.x - w.x, f.y - w.y) - w.radius
+            # w.measure, not w.radius: S7F 9.3's measurement radius is a
+            # policy (rules/s7f_09_control_zones.MEASUREMENT_RADIUS) and the
+            # hot loop reads it. Using the nominal radius here made this check
+            # fail by exactly the 5 m tolerance once the policy moved to
+            # "outer" — the check was wrong, not the engine.
+            inline = math.hypot(f.x - w.x, f.y - w.y) - w.measure
             inline = (inline if inline > 0.0 else 0.0) + task.remaining[next_wp]
             d = abs(ref - inline)
             n += 1
@@ -708,9 +713,18 @@ def check_optimiser(task) -> Check:
     inside optimise(), so it is a cross-check and not a restatement.
     """
     import math as _m
+    from engine.task import TAKEOFF
+
     xs, ys = task.opt_x, task.opt_y
     n = len(xs)
     s = task.route_start
+
+    # The optimiser is given the TAKEOFF as a point, not a cylinder (see
+    # engine/task.optimise). Checking optimality against a model where the
+    # takeoff may be clipped finds an "improvement" of exactly the takeoff
+    # radius every time, which is not a bug in the optimiser — it is this
+    # check disagreeing with the rule.
+    radii = [0.0 if w.kind == TAKEOFF else w.measure for w in task.waypoints]
 
     def total(px, py):
         return sum(_m.hypot(px[i + 1] - px[i], py[i + 1] - py[i])
@@ -726,15 +740,15 @@ def check_optimiser(task) -> Check:
             a = k * _m.pi / 180.0
             for frac in (1.0, 0.98, 0.9, 0.5, 0.0):
                 px, py = list(xs), list(ys)
-                px[i] = w.x + _m.cos(a) * w.radius * frac
-                py[i] = w.y + _m.sin(a) * w.radius * frac
+                px[i] = w.x + _m.cos(a) * radii[i] * frac
+                py[i] = w.y + _m.sin(a) * radii[i] * frac
                 gain = base - total(px, py)
                 if gain > local_gain:
                     local_gain, local_where = gain, w.name
 
     # --- 2. global: an independent shortest-path DP ---
     from engine.rules.route import shortest_route_dp
-    pts = [(w.x, w.y, w.radius) for w in task.waypoints]
+    pts = [(w.x, w.y, radii[i]) for i, w in enumerate(task.waypoints)]
     gx, gy = shortest_route_dp(pts, s, 128, (1.0, 0.75, 0.5, 0.25))
     dp_len = total(gx, gy)
     global_gain = base - dp_len

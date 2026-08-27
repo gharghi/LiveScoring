@@ -84,12 +84,21 @@ def compile_task(task_settings):
 
 def gap_params(comp_settings):
     cfg = _json(comp_settings)
+    # Integration clients send GAP settings under the standard event
+    # ``formula.parameters`` object. Keep accepting the historical flat
+    # competition JSON keys, with explicit flat values taking precedence.
+    formula = cfg.get("formula") if isinstance(cfg.get("formula"), dict) else {}
+    nested = formula.get("parameters") if isinstance(formula.get("parameters"), dict) else {}
+
+    def setting(name, default):
+        return cfg[name] if name in cfg else nested.get(name, default)
+
     return GapParams(
-        nominal_distance=float(cfg.get("nominal_distance_km", 60)) * 1000,
-        minimum_distance=float(cfg.get("minimum_distance_km", 5)) * 1000,
-        nominal_time=float(cfg.get("nominal_time_min", 90)) * 60,
-        leading_time_ratio=float(cfg.get("leading_time_ratio", 0.26)),
-        ess_no_goal_time_factor=float(cfg.get("ess_no_goal_time_factor", 0.0)),
+        nominal_distance=float(setting("nominal_distance_km", 60)) * 1000,
+        minimum_distance=float(setting("minimum_distance_km", 5)) * 1000,
+        nominal_time=float(setting("nominal_time_min", 90)) * 60,
+        leading_time_ratio=float(setting("leading_time_ratio", 0.26)),
+        ess_no_goal_time_factor=float(setting("ess_no_goal_time_factor", 0.0)),
     )
 
 
@@ -174,6 +183,22 @@ def classify(task, task_score, results):
                 "distance_to_next_m": distance_to_next,
                 "distance_to_goal_m": max(0.0, task.total_distance - result.distance),
                 "progress_percent": progress,
+                "_landing": {
+                    "detected": result.landing_time is not None,
+                    "epoch": result.landing_time,
+                    "fix_index": result.landing_fix_index if result.landing_time is not None else None,
+                },
+                "_scoring": {
+                    "distance_points": result.distance_points,
+                    "time_points": result.time_points,
+                    "leading_points": result.leading_points,
+                    "total_points": result.total_points,
+                    "lc": result.lc,
+                    "start_epoch": result.start_time,
+                    "start_cross_epoch": result.start_cross_time,
+                    "ess_epoch": result.ess_time,
+                    "goal_epoch": result.goal_time,
+                },
             },
         })
     summary = {

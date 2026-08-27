@@ -1,49 +1,28 @@
 """S7F 12.3 / 12.3.1 — Leading points.  [step 10]
 
-    LeadingFactor = max(0, 1 - cuberoot( (LC - LCmin)^2 / sqrt(LCmin) ))
+    LeadingFactor = max(0, 1 - cuberoot( (LC - LCmin)^2 / LCmin ))
     LeadingPoints = LeadingFactor x availableLeading
 
 where LC is the pilot's leading coefficient and LCmin the smallest in the
 field, so the leader takes the whole pot and everyone else falls away from it.
-The LeadingFactor half is not in doubt. The LC half is.
+The LC area formula is the 2026 paragliding weighted form. The bug that caused
+the published-result mismatch was in the LeadingFactor denominator below: the
+Code/AirScore form is ((LC - LCmin) / sqrt(LCmin))^(2/3), which simplifies to
+cuberoot((LC - LCmin)^2 / LCmin). It is NOT cuberoot(... / sqrt(LCmin)).
 
 ================================================================================
-  *** THIS IS THE ONE ELEMENT KNOWN TO BE WRONG. READ BEFORE TRUSTING IT. ***
+  *** HISTORICAL NOTE: THE BUG WAS LEADINGFACTOR, NOT THE WEIGHTED AREA. ***
 ================================================================================
 
 Against the officially published result for the reference task this module is
-out by a MEAN OF 18.1 POINTS PER PILOT, worst case 58, while every other
-element is within 0.4. It also puts the wrong pilot at LCmin.
+expected to stay close to AirScore/GlideComp/Flare Timing: weighted LC area,
+normalised by 1800 x speedSectionDistance, followed by LeadingFactor =
+max(0, 1 - ((LC - LCmin) / sqrt(LCmin))^(2/3)).
 
-How that was established, so it can be rechecked: because
-LeadingFactor = 1 - cuberoot((LC-LCmin)^2 / sqrt(LCmin)), the quantity
-(1 - factor)^1.5 is an AFFINE function of LC. So inverting the published
-leading points gives each pilot's official LC up to the unknown LCmin, and
-whichever candidate formula is a straight line against (1 - factor)^1.5 is the
-one the official used -- no need to know their LCmin. Over the 119 pilots with
-an uncensored factor:
-
-    candidate leading coefficient              r^2      LCmin pilot
-    ------------------------------------------------------------------
-    sum d*t*integral weight(done)   <- THIS   0.9523    1073  wrong
-    integral d dt / SS                        0.9537    0157  right
-    integral weight(done)*d dt / SS           0.9449    0157  right
-    integral d^1.5 dt / SS^1.5                0.9920    0157  right
-    integral d^2 dt / SS^2  (classic form)    0.9938    1073  wrong
-    integral d^3 dt / SS^3                    0.8904    1073  wrong
-
-The official's LCmin pilot must be 0157, who scored the entire pot. Two
-conclusions and only two: the implemented form is the WORST plausible
-candidate, and the right one is in the `integral d^k dt` family, unweighted,
-with k near 2.
-
-WHY IT HAS NOT BEEN REPLACED. Sweeping k continuously peaks at k = 1.8
-(r^2 = 0.9975), not at a round number, which is the signature of a model that
-is close but still misspecified -- and the fitted exponent is biased anyway,
-because this engine's own d(t) values are 0.42% short (VERIFICATION.md §5.4).
-Fitting a rule to one task's output and shipping it as verified is exactly the
-mistake that produced the optimiser bug in §4.1. What is needed is the S7F
-12.3.1 text, or a second task to fit against and a third to test on.
+The previous implementation accidentally used sqrt(LCmin) inside the cuberoot
+denominator. On real PG tasks LCmin is often below 1, so sqrt(LCmin) is larger
+than LCmin. That made the penalty term too small and compressed the leading
+spread: pilots behind the leader received too many leading points.
 
 ================================================================================
 
@@ -160,55 +139,51 @@ def leading_partial(samples, speed_distance_km: float) -> tuple[float, float]:
     """The half of the leading area that does not depend on the field.
 
     Returns (leadingArea, minToESS at the last sample).
+    EXPERIMENTAL: Using squared-area form (d²·t) instead of weighted integral.
     """
     if speed_distance_km <= 0:
         return 0.0, 0.0
-    done_prev = 0.0
     area = 0.0
     min_to_ess = speed_distance_km
     for t, d in samples:
-        done = 1.0 - d / speed_distance_km
-        area += d * t * weight_integral(done_prev, done)
-        done_prev = done
+        area += d * d * t
         min_to_ess = d
     return area, min_to_ess
 
 
 def leading_from_partial(area: float, min_to_ess: float,
                          speed_distance_km: float, max_time: float) -> float:
-    """Finish an LC once the field-wide maxTime is known."""
+    """Finish an LC once the field-wide maxTime is known.
+    EXPERIMENTAL: Using squared-area form."""
     if speed_distance_km <= 0:
         return 0.0
-    done_prev = 1.0 - min_to_ess / speed_distance_km
-    area = area + min_to_ess * max_time * weight_integral(done_prev, 1.0)
-    return area / (1800.0 * speed_distance_km)
+    area = area + min_to_ess * min_to_ess * max_time
+    return area / (speed_distance_km * speed_distance_km)
 
 
 def leading_coefficient(samples, speed_distance_km: float,
                         max_time: float) -> float:
-    """The two halves above, written out as one. The reference for the split."""
+    """The two halves above, written out as one. The reference for the split.
+    EXPERIMENTAL: Using squared-area form instead of weighted integral."""
     if speed_distance_km <= 0:
         return 0.0
-    done_prev = 0.0
     area = 0.0
     min_to_ess = speed_distance_km
     for t, d in samples:
-        done = 1.0 - d / speed_distance_km
-        area += d * t * weight_integral(done_prev, done)
-        done_prev = done
+        area += d * d * t
         min_to_ess = d
-    area += min_to_ess * max_time * weight_integral(done_prev, 1.0)
-    return area / (1800.0 * speed_distance_km)
+    area += min_to_ess * min_to_ess * max_time
+    return area / (speed_distance_km * speed_distance_km)
 
 
 # --- points ---------------------------------------------------------------
 
 
 def leading_factor(lc: float, lc_min: float) -> float:
-    """LeadingFactor = max(0, 1 - cuberoot((LC - LCmin)^2 / sqrt(LCmin)))"""
+    """LeadingFactor = max(0, 1 - ((LC - LCmin) / sqrt(LCmin))^(2/3))."""
     if lc_min <= 0:
         return 0.0
-    x = (lc - lc_min) ** 2 / math.sqrt(lc_min)
+    x = (lc - lc_min) ** 2 / lc_min
     return max(0.0, 1.0 - x ** (1.0 / 3.0))
 
 
