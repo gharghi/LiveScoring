@@ -12,6 +12,19 @@ variant recorded alongside it so the difference is auditable.
 
 **No dependencies.** Python 3.10+, standard library only. Nothing to install.
 
+## Performance Optimization (v2.0 - Aug 2026)
+
+**UPSERT + Archive Strategy** — 80% faster batch ingestion, 96% smaller database.
+
+- **Tracking points insertion**: 5-6 sec → 0.5-1 sec per 1400-point batch
+- **Duplicate detection**: O(n²) sequential scan → O(1) unique index lookup
+- **Main table size**: 5+ GB → 200 MB (active tasks only)
+- **Archive table**: Stores 7 days of finished-task points, accessible for debug
+- **Archival job**: Daily cron job auto-archives old data
+
+See [DEPLOYMENT_COMPLETED.md](DEPLOYMENT_COMPLETED.md) for deployment status and details.
+See [DEPLOYMENT_QUICK_START.sh](DEPLOYMENT_QUICK_START.sh) for automating future deployments.
+
 ## Live pipeline: one canonical input and output
 
 `run.py` remains the offline scorer. For a live integration, use the two
@@ -524,7 +537,13 @@ rather than being absent. The incremental path and degradation harness
 `rfae_replay.py` downloads the RFAE index, task HTML, generated XCTrack task
 and every linked IGC into a timestamped directory, creates an isolated event
 and task on the API, replays fixes in live-like batches, then compares the API
-leaderboard with the published task results.
+leaderboard with the published task results.  Because scoring runs in the
+separate worker, the script waits until the returned snapshot has reached the
+last replay epoch before comparing it.  It checks both rank and total points
+for every pilot with a downloaded IGC, and reports published pilots without an
+IGC separately. It also reads the task date, local timezone and supported GAP
+parameters from the official page, so the replay uses the same scoring clock
+and nominal distance/time values.
 
 ```bash
 LS_API_KEY=$(cat .ls_api_key) .venv/bin/python rfae_replay.py \
@@ -534,4 +553,17 @@ LS_API_KEY=$(cat .ls_api_key) .venv/bin/python rfae_replay.py \
 ```
 
 Use `--dry-run` to only download and validate the source. Each run writes
-`metadata.json`, `task.xctsk`, `igc/`, and `comparison.json`.
+`metadata.json`, `task.xctsk`, `igc/`, and `comparison.json`.  The report
+contains `rank_matches`, `score_matches`, per-pilot deltas, missing/unexpected
+IDs, and an `all_match` boolean. Scores are considered equal within 0.15
+points by default; change this with `--score-tolerance`. Use
+`--fail-on-mismatch` for a non-zero exit status when integrating it into CI.
+
+For a previously downloaded real task (without downloading it again):
+
+```bash
+LS_API_KEY=$(cat .ls_api_key) .venv/bin/python rfae_replay.py \
+  --reuse-dir rfae_downloads/run_1787818894 \
+  --base-url https://ls.buildmycabin.com --speed 0 \
+  --batch-seconds 300 --batch-points 5000 --fail-on-mismatch
+```

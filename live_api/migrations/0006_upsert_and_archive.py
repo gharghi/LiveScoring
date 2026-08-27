@@ -64,9 +64,9 @@ class Migration(migrations.Migration):
             ],
             options={
                 'indexes': [
-                    models.Index(fields=['task_id', 'timestamp'], name='tracking_archive_task_time_idx'),
-                    models.Index(fields=['pilot_id', 'timestamp'], name='tracking_archive_pilot_time_idx'),
-                    models.Index(fields=['fingerprint'], name='tracking_archive_fingerprint_idx'),
+                    models.Index(fields=['task_id', 'timestamp'], name='track_arch_task_time'),
+                    models.Index(fields=['pilot_id', 'timestamp'], name='track_arch_pilot_time'),
+                    models.Index(fields=['fingerprint'], name='track_arch_fingerprint'),
                 ],
             },
         ),
