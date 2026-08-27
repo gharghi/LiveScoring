@@ -86,13 +86,14 @@ def _insert_task_points_postgres(task, rows, received_count, processed_epochs):
             )
         ),
         batch_latest AS (
+            -- Dedup within batch: keep latest version of each (pilot_id, epoch)
             SELECT DISTINCT ON (pilot_id, epoch)
                 pilot_id, epoch, lat, lon, alt_gps, alt_baro, event_id,
                 source, fingerprint, raw
             FROM incoming
             ORDER BY pilot_id, epoch, ord DESC
         ),
-        inserted AS (
+        upserted AS (
             INSERT INTO live_api_trackingpoint (
                 competition_id, task_id, pilot_id, event_id, timestamp,
                 latitude, longitude, altitude_gps, altitude_baro, source,
@@ -103,26 +104,29 @@ def _insert_task_points_postgres(task, rows, received_count, processed_epochs):
                 to_timestamp(b.epoch), b.lat, b.lon, b.alt_gps, b.alt_baro,
                 COALESCE(b.source, ''), b.fingerprint, b.raw, now()
             FROM batch_latest b
-            WHERE NOT EXISTS (
-                SELECT 1
-                FROM live_api_trackingpoint p
-                WHERE p.task_id = %s::uuid
-                  AND p.pilot_id = b.pilot_id
-                  AND p.timestamp = to_timestamp(b.epoch)
-            )
-            RETURNING EXTRACT(EPOCH FROM timestamp)::bigint AS epoch
+            ON CONFLICT (task_id, pilot_id, timestamp) DO UPDATE SET
+                event_id = COALESCE(EXCLUDED.event_id, live_api_trackingpoint.event_id),
+                source = COALESCE(EXCLUDED.source, live_api_trackingpoint.source),
+                altitude_gps = COALESCE(EXCLUDED.altitude_gps, live_api_trackingpoint.altitude_gps),
+                altitude_baro = COALESCE(EXCLUDED.altitude_baro, live_api_trackingpoint.altitude_baro),
+                raw = live_api_trackingpoint.raw || EXCLUDED.raw,
+                received_at = now()
+            RETURNING EXTRACT(EPOCH FROM timestamp)::bigint AS epoch, xmax = 0 AS was_insert
         ),
-        inserted_stats AS (
-            SELECT COUNT(*)::integer AS accepted, MAX(epoch)::bigint AS latest_epoch
-            FROM inserted
+        upserted_stats AS (
+            SELECT
+                COUNT(*)::integer AS total_rows,
+                SUM(CASE WHEN xmax = 0 THEN 1 ELSE 0 END)::integer AS inserted_new,
+                MAX(epoch)::bigint AS latest_epoch
+            FROM upserted
         ),
         state_upsert AS (
             INSERT INTO live_api_taskingestionstate (
                 task_id, competition_id, latest_epoch, point_count, dirty, updated_at
             )
-            SELECT %s::uuid, %s::uuid, latest_epoch, accepted, (accepted > 0), now()
-            FROM inserted_stats
-            WHERE accepted > 0
+            SELECT %s::uuid, %s::uuid, latest_epoch, inserted_new, (inserted_new > 0), now()
+            FROM upserted_stats
+            WHERE inserted_new > 0
             ON CONFLICT (task_id) DO UPDATE SET
                 competition_id = EXCLUDED.competition_id,
                 latest_epoch = GREATEST(
@@ -134,7 +138,7 @@ def _insert_task_points_postgres(task, rows, received_count, processed_epochs):
                 updated_at = now()
             RETURNING 1
         )
-        SELECT COUNT(*) FROM inserted
+        SELECT inserted_new, total_rows FROM upserted_stats
     """
     with connection.cursor() as cursor:
         cursor.execute(sql, [
@@ -142,13 +146,13 @@ def _insert_task_points_postgres(task, rows, received_count, processed_epochs):
             str(task.competition_id),
             str(task.id),
             str(task.id),
-            str(task.id),
             str(task.competition_id),
         ])
-        accepted = int(cursor.fetchone()[0])
+        result = cursor.fetchone()
+        inserted = int(result[0]) if result else 0
     return {
-        "accepted": accepted,
-        "duplicates": received_count - accepted,
+        "accepted": inserted,
+        "duplicates": received_count - inserted,
         "processed_epoch": max(processed_epochs, default=None),
     }
 
@@ -379,4 +383,150 @@ def _latest_task_classification_orm(task):
         "timings": None,
         "error": None,
         "pilots": pilots,
+    }
+
+
+# ============================================================================
+# ARCHIVAL FUNCTIONS
+# ============================================================================
+
+def get_task_tracking_points(task, pilot_id=None, start_time=None, end_time=None):
+    """
+    Get tracking points from active or archived table.
+    Automatically checks active table first, falls back to archive if not found.
+
+    Args:
+        task: Task object
+        pilot_id: Optional pilot ID filter
+        start_time: Optional start datetime filter
+        end_time: Optional end datetime filter
+
+    Returns:
+        QuerySet of TrackingPoint or TrackingPointArchive
+    """
+    from .models import TrackingPoint, TrackingPointArchive
+
+    # Try active table first (faster)
+    active_points = TrackingPoint.objects.filter(task=task)
+    if pilot_id:
+        active_points = active_points.filter(pilot_id=pilot_id)
+    if start_time:
+        active_points = active_points.filter(timestamp__gte=start_time)
+    if end_time:
+        active_points = active_points.filter(timestamp__lte=end_time)
+
+    if active_points.exists():
+        return active_points.order_by('timestamp')
+
+    # Fall back to archive if not in active table
+    archive_points = TrackingPointArchive.objects.filter(task=task)
+    if pilot_id:
+        archive_points = archive_points.filter(pilot_id=pilot_id)
+    if start_time:
+        archive_points = archive_points.filter(timestamp__gte=start_time)
+    if end_time:
+        archive_points = archive_points.filter(timestamp__lte=end_time)
+
+    return archive_points.order_by('timestamp')
+
+
+def archive_task_points(task, source='orm'):
+    """
+    Archive tracking points from a finished task to the archive table.
+
+    Args:
+        task: Task object to archive
+        source: 'orm' (Django ORM) or 'sql' (direct SQL, faster for large batches)
+
+    Returns:
+        dict with 'archived_count', 'deleted_count', 'status'
+    """
+    from .models import TrackingPoint, TrackingPointArchive
+
+    if connection.vendor == "postgresql" and source == 'sql':
+        return _archive_task_points_postgres(task)
+
+    # ORM fallback
+    points = TrackingPoint.objects.filter(task=task)
+    point_count = points.count()
+
+    if point_count == 0:
+        return {"archived_count": 0, "deleted_count": 0, "status": "no_points"}
+
+    # Convert to archive objects
+    archive_points = [
+        TrackingPointArchive(
+            id=p.id,
+            competition_id=p.competition_id,
+            task_id=p.task_id,
+            pilot_id=p.pilot_id,
+            event_id=p.event_id,
+            timestamp=p.timestamp,
+            latitude=p.latitude,
+            longitude=p.longitude,
+            altitude_gps=p.altitude_gps,
+            altitude_baro=p.altitude_baro,
+            source=p.source,
+            fingerprint=p.fingerprint,
+            raw=p.raw,
+            received_at=p.received_at,
+        )
+        for p in points.iterator(chunk_size=5000)
+    ]
+
+    # Bulk insert to archive
+    TrackingPointArchive.objects.bulk_create(
+        archive_points,
+        ignore_conflicts=True,
+        batch_size=5000
+    )
+
+    # Delete from main table
+    points.delete()
+
+    return {
+        "archived_count": point_count,
+        "deleted_count": point_count,
+        "status": "success"
+    }
+
+
+def _archive_task_points_postgres(task):
+    """Fast PostgreSQL version using direct SQL for archival."""
+    sql = """
+        WITH to_archive AS (
+            SELECT * FROM live_api_trackingpoint WHERE task_id = %s::uuid
+        ),
+        inserted AS (
+            INSERT INTO live_api_trackingpoint_archive (
+                id, competition_id, task_id, pilot_id, event_id, timestamp,
+                latitude, longitude, altitude_gps, altitude_baro, source,
+                fingerprint, raw, received_at
+            )
+            SELECT
+                id, competition_id, task_id, pilot_id, event_id, timestamp,
+                latitude, longitude, altitude_gps, altitude_baro, source,
+                fingerprint, raw, received_at
+            FROM to_archive
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id
+        ),
+        deleted AS (
+            DELETE FROM live_api_trackingpoint
+            WHERE task_id = %s::uuid
+            RETURNING id
+        )
+        SELECT (SELECT COUNT(*) FROM inserted) as archived, (SELECT COUNT(*) FROM deleted) as deleted
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(sql, [str(task.id), str(task.id)])
+        result = cursor.fetchone()
+        archived = int(result[0]) if result else 0
+        deleted = int(result[1]) if result else 0
+
+    return {
+        "archived_count": archived,
+        "deleted_count": deleted,
+        "status": "success" if deleted > 0 else "no_points"
     }

@@ -54,10 +54,48 @@ class TrackingPoint(models.Model):
     raw = models.JSONField(default=dict)
     received_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["task_id", "pilot_id", "timestamp"],
+                name="tracking_point_dedup_uniq"
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["task_id", "pilot_id", "timestamp"], name="tracking_point_dedup_idx"),
+            models.Index(fields=["task_id", "timestamp", "-id"], name="tracking_point_task_time_idx"),
+            models.Index(fields=["fingerprint"], name="tracking_point_fingerprint_idx"),
+        ]
+
     @staticmethod
     def make_fingerprint(pilot_id, timestamp, latitude, longitude):
         value = f"{pilot_id}|{timestamp.isoformat()}|{latitude:.7f}|{longitude:.7f}"
         return hashlib.sha256(value.encode()).hexdigest()
+
+
+class TrackingPointArchive(models.Model):
+    """Archive of old tracking points for long-term storage. Same schema as TrackingPoint."""
+    id = models.BigAutoField(primary_key=True)
+    competition = models.ForeignKey(Competition, on_delete=models.CASCADE, related_name="tracking_points_archive")
+    task = models.ForeignKey(Task, on_delete=models.CASCADE, null=True, blank=True, related_name="tracking_points_archive")
+    pilot_id = models.CharField(max_length=200)
+    event_id = models.CharField(max_length=200, blank=True, default="")
+    timestamp = models.DateTimeField()
+    latitude = models.FloatField()
+    longitude = models.FloatField()
+    altitude_gps = models.FloatField(null=True, blank=True)
+    altitude_baro = models.FloatField(null=True, blank=True)
+    source = models.CharField(max_length=100, blank=True, default="")
+    fingerprint = models.CharField(max_length=64, db_index=True)
+    raw = models.JSONField(default=dict)
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["task_id", "timestamp"], name="tracking_archive_task_time_idx"),
+            models.Index(fields=["pilot_id", "timestamp"], name="tracking_archive_pilot_time_idx"),
+            models.Index(fields=["fingerprint"], name="tracking_archive_fingerprint_idx"),
+        ]
 
 
 class TaskResultSnapshot(models.Model):
