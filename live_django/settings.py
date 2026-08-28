@@ -31,6 +31,15 @@ TEMPLATES = [{
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
+# Django only routes django.request tracebacks to the console when DEBUG is on,
+# so unhandled 500s are invisible in the journal in production. Log them always.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "loggers": {"django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False}},
+}
+
 # Nginx terminates TLS in production. Preserve HTTPS semantics for Django's
 # secure cookies and CSRF checks while keeping local development convenient.
 if not DEBUG:

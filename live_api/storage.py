@@ -116,7 +116,7 @@ def _insert_task_points_postgres(task, rows, received_count, processed_epochs):
         upserted_stats AS (
             SELECT
                 COUNT(*)::integer AS total_rows,
-                SUM(CASE WHEN xmax = 0 THEN 1 ELSE 0 END)::integer AS inserted_new,
+                SUM(CASE WHEN was_insert THEN 1 ELSE 0 END)::integer AS inserted_new,
                 MAX(epoch)::bigint AS latest_epoch
             FROM upserted
         ),
@@ -212,6 +212,26 @@ def _insert_task_points_orm(task, rows, received_count, processed_epochs):
         "accepted": len(new_rows),
         "duplicates": received_count - len(new_rows),
         "processed_epoch": max(processed_epochs, default=None),
+    }
+
+
+def _scored_pilot_payload(row):
+    """Rebuild a ranking entry from a stored pilot score snapshot.
+
+    ``row`` is (pilot_id, rank, state, score, distance_m, speed_kmh, ess, goal,
+    position) — the columns score_worker writes in ``save_success``.
+    """
+    pilot_id, rank, state, score, distance_m, speed_kmh, ess, goal, position = row
+    return {
+        "pilot_id": pilot_id,
+        "rank": rank,
+        "state": state,
+        "score": score,
+        "distance_m": distance_m,
+        "speed_kmh": speed_kmh,
+        "ess": ess,
+        "goal": goal,
+        "position": _json_value(position) or {},
     }
 
 
