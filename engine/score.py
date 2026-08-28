@@ -650,9 +650,6 @@ def _score_until_landing_if_needed(task: CompiledTask, fixes: list[Fix],
                                    now: float, params: GapParams,
                                    initial: PilotResult,
                                    trace: dict | None = None) -> PilotResult:
-    if initial.goal_time is not None:
-        return initial
-
     if initial.start_cross_time is not None:
         after = initial.start_cross_time + LANDING_AFTER_START_DELAY_S
     elif initial.takeoff_time is not None:
@@ -660,13 +657,26 @@ def _score_until_landing_if_needed(task: CompiledTask, fixes: list[Fix],
     else:
         return initial
 
-    before = min(float(now), float(initial.last_t or now))
+    # A goal pilot is still searched to `now`: the crossing itself may have come
+    # from ground movement after landing (retrieve vehicles drive to goal), and
+    # `last_t` would already be the bogus crossing. Scoring the whole track is
+    # what lets the landing below be found at all.
+    if initial.goal_time is not None:
+        before = float(now)
+    else:
+        before = min(float(now), float(initial.last_t or now))
     landing = _detect_landing_cutoff(fixes, after, before)
     if landing is None:
         return initial
 
     landing_time, landing_index = landing
     if landing_time >= now:
+        return initial
+
+    # A pilot who genuinely flew to goal landed after crossing it; leave them
+    # alone. Only a "goal" reached after a sustained landing is ground movement,
+    # and that one gets re-scored with the clock cut at the landing.
+    if initial.goal_time is not None and initial.goal_time <= landing_time:
         return initial
 
     # Replay the exact same state machine with the scoring clock cut at the
