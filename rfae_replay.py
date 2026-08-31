@@ -462,14 +462,25 @@ def main():
         if ts:
             print("  " + "  ".join(f"{k}={v:g}" if isinstance(v, (int, float)) else f"{k}={v}"
                                    for k, v in sorted(ts.items())))
-        print(f"  {'rank':>4}  {'pilot':>6}  {'score':>7}  {'dist_km':>8}  {'km/h':>6}  {'ess':>3} {'goal':>4}  state")
+        print(f"  {'rank':>4}  {'pilot':>6}  {'score':>7}  {'dist_km':>8}  "
+              f"{'dist_p':>7}  {'time_p':>7}  {'lead_p':>7}  {'lc':>6}  "
+              f"{'km/h':>6}  {'ess':>3} {'goal':>4}  state")
         for r in sorted(rows, key=lambda z: (z.get("rank") is None, z.get("rank") or 0)):
             speed = r.get("speed_kmh")
+            sc = r.get("scoring") or {}
+            num = lambda v: f"{float(v):.1f}" if v is not None else "-"
+            lc = sc.get("lc")
+            lc_text = f"{float(lc):.4f}" if lc is not None else "-"
             print(f"  {str(r.get('rank') or '-'):>4}  {str(r.get('pilot_id')):>6}  "
                   f"{float(r.get('score') or 0):>7.1f}  {float(r.get('distance_m') or 0)/1000:>8.2f}  "
+                  f"{num(sc.get('distance_points')):>7}  {num(sc.get('time_points')):>7}  "
+                  f"{num(sc.get('leading_points')):>7}  {lc_text:>6}  "
                   f"{(f'{float(speed):.1f}' if speed else '-'):>6}  "
                   f"{('Y' if r.get('ess') else '-'):>3} {('Y' if r.get('goal') else '-'):>4}  "
                   f"{r.get('state','')}")
+        tot = lambda k: sum(float((p.get('scoring') or {}).get(k) or 0) for p in rows)
+        print(f"  {'':>4}  {'TOTAL':>6}  {sum(float(p.get('score') or 0) for p in rows):>7.1f}  {'':>8}  "
+              f"{tot('distance_points'):>7.1f}  {tot('time_points'):>7.1f}  {tot('leading_points'):>7.1f}")
         if latencies:
             q = sorted(latencies)
             print(f"HTTP performance: p50={q[len(q)//2]:.0f}ms p95={q[min(len(q)-1,int(len(q)*.95))]:.0f}ms max={q[-1]:.0f}ms")

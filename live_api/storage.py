@@ -219,9 +219,11 @@ def _scored_pilot_payload(row):
     """Rebuild a ranking entry from a stored pilot score snapshot.
 
     ``row`` is (pilot_id, rank, state, score, distance_m, speed_kmh, ess, goal,
-    position) — the columns score_worker writes in ``save_success``.
+    distance_points, time_points, leading_points, lc, position) — the columns
+    score_worker writes in ``save_success``.
     """
-    pilot_id, rank, state, score, distance_m, speed_kmh, ess, goal, position = row
+    (pilot_id, rank, state, score, distance_m, speed_kmh, ess, goal,
+     distance_points, time_points, leading_points, lc, position) = row
     return {
         "pilot_id": pilot_id,
         "rank": rank,
@@ -231,6 +233,14 @@ def _scored_pilot_payload(row):
         "speed_kmh": speed_kmh,
         "ess": ess,
         "goal": goal,
+        # The GAP breakdown behind `score`, as promised by the OpenAPI schema.
+        "scoring": {
+            "distance_points": distance_points,
+            "time_points": time_points,
+            "leading_points": leading_points,
+            "total_points": score,
+            "lc": lc,
+        },
         "position": _json_value(position) or {},
     }
 
@@ -255,7 +265,8 @@ def _latest_task_classification_postgres(task):
             computed_at, scored_epoch, point_count, status, task_score, timings, error = snapshot
             cursor.execute("""
                 SELECT pilot_id, rank, state, score, distance_m, speed_kmh,
-                       ess, goal, position
+                       ess, goal, distance_points, time_points, leading_points,
+                       lc, position
                 FROM live_api_pilotscoresnapshot
                 WHERE task_id = %s::uuid
                 ORDER BY rank, pilot_id
@@ -335,7 +346,8 @@ def _latest_task_classification_orm(task):
     if snapshot:
         pilots = [_scored_pilot_payload((
             row.pilot_id, row.rank, row.state, row.score, row.distance_m,
-            row.speed_kmh, row.ess, row.goal, row.position,
+            row.speed_kmh, row.ess, row.goal, row.distance_points,
+            row.time_points, row.leading_points, row.lc, row.position,
         )) for row in task.pilot_score_snapshots.order_by("rank", "pilot_id")]
         return {
             "computed_at_epoch": int(snapshot.computed_at.timestamp()),

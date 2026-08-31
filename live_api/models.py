@@ -125,6 +125,13 @@ class PilotScoreSnapshot(models.Model):
     speed_kmh = models.FloatField(null=True, blank=True)
     ess = models.BooleanField(default=False)
     goal = models.BooleanField(default=False)
+    # The GAP components behind `score`. Kept as columns rather than folded into
+    # `position` because they are what a protest is argued over, and what the
+    # published results tables show alongside the total.
+    distance_points = models.FloatField(default=0)
+    time_points = models.FloatField(default=0)
+    leading_points = models.FloatField(default=0)
+    lc = models.FloatField(default=0)
     position = models.JSONField(default=dict)
     updated_at = models.DateTimeField(auto_now=True)
 

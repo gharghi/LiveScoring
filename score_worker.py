@@ -165,6 +165,10 @@ def classify(task, task_score, results):
             "speed_kmh": result.speed,
             "ess": result.ess_time is not None,
             "goal": result.goal_time is not None,
+            "distance_points": result.distance_points,
+            "time_points": result.time_points,
+            "leading_points": result.leading_points,
+            "lc": result.lc,
             "position": {
                 "lat": result.last_lat,
                 "lon": result.last_lon,
@@ -223,10 +227,12 @@ def save_success(conn, task_id, competition_id, processed_epoch, point_count, ta
                 cur.execute("""
                     INSERT INTO live_api_pilotscoresnapshot (
                         task_id, pilot_id, rank, state, score, distance_m,
-                        speed_kmh, ess, goal, position, updated_at
+                        speed_kmh, ess, goal, distance_points, time_points,
+                        leading_points, lc, position, updated_at
                     )
                     SELECT %s::uuid, pilot_id, rank, state, score, distance_m,
-                           speed_kmh, ess, goal, position, now()
+                           speed_kmh, ess, goal, distance_points, time_points,
+                           leading_points, lc, position, now()
                     FROM jsonb_to_recordset(%s::jsonb) AS x(
                         pilot_id text,
                         rank integer,
@@ -236,6 +242,10 @@ def save_success(conn, task_id, competition_id, processed_epoch, point_count, ta
                         speed_kmh double precision,
                         ess boolean,
                         goal boolean,
+                        distance_points double precision,
+                        time_points double precision,
+                        leading_points double precision,
+                        lc double precision,
                         position jsonb
                     )
                 """, [task_id, pilots_json])
