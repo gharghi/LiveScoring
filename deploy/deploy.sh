@@ -68,23 +68,32 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$REPO_DIR"
 set -a; . "$ENV_FILE"; set +a
 export DJANGO_SETTINGS_MODULE=${DJANGO_SETTINGS_MODULE:-live_django.settings}
 
+PYTHON=${PYTHON:-$REPO_DIR/venv/bin/python}
+PIP=${PIP:-$REPO_DIR/venv/bin/pip}
+if [ ! -x "$PYTHON" ]; then
+    PYTHON=python3
+fi
+if [ ! -x "$PIP" ]; then
+    PIP=pip3
+fi
+
 if ! git diff --quiet "$PREV" "$TARGET" -- requirements.txt; then
     log "requirements.txt changed; installing"
-    pip3 install --quiet -r requirements.txt
+    "$PIP" install --quiet -r requirements.txt
 else
     log "requirements.txt unchanged; skipping install"
 fi
 
 log "running engine self-checks"
-python3 -m tests > /tmp/livescoring-deploy-tests.log 2>&1 \
+"$PYTHON" -m tests > /tmp/livescoring-deploy-tests.log 2>&1 \
     || { log "engine checks FAILED (see /tmp/livescoring-deploy-tests.log)"; tail -20 /tmp/livescoring-deploy-tests.log; false; }
 log "engine checks passed"
 
 log "applying migrations"
-python3 manage.py migrate --noinput
+"$PYTHON" manage.py migrate --noinput
 
 log "collecting static files"
-python3 manage.py collectstatic --noinput --clear > /dev/null
+"$PYTHON" manage.py collectstatic --noinput --clear > /dev/null
 
 chown -R "$SERVICE_USER:$SERVICE_USER" "$REPO_DIR"
 
