@@ -95,16 +95,29 @@ def score_task(task: CompiledTask, results: list[PilotResult], params: GapParams
 
     sd_km = task.speed_distance / 1000.0
     started = [r for r in flying if r.start_time is not None]
+    progress_curve = getattr(task, "progress_curve", "WEIGHTED").upper()
     for r in started:
         # The per-pilot half of the LC may already have been computed — by a
         # worker process, or by an earlier publish cycle whose maxTime has since
         # moved. Only the field-wide half is redone here.
         if r.lead_area is None:
-            r.lead_area, r.lead_min_to_ess = rules.leading_partial(r.lead_samples, sd_km)
+            if progress_curve == "HUMP_V2A":
+                r.lead_area, r.lead_min_to_ess = rules.leading_partial_hump_v2a(
+                    r.lead_samples, sd_km)
+            else:
+                r.lead_area, r.lead_min_to_ess = rules.leading_partial(
+                    r.lead_samples, sd_km)
         r.max_time = rules.max_time_for(r.last_task_time, last_ess, ts.max_time)
         r.lc = rules.s7f_12_pilot_points.leading_coefficient(
-            r.lead_area, r.lead_min_to_ess, sd_km, r.max_time)
-    lcs = [r.lc for r in started if r.lc > 0]
+            r.lead_area, r.lead_min_to_ess, sd_km, r.max_time,
+            progress_curve=progress_curve,
+            last_task_time=r.last_task_time)
+    lc_population = (
+        [r for r in started if r.ess_time is not None]
+        if progress_curve == "HUMP_V2A" and ts.pilots_ess > 0
+        else started
+    )
+    lcs = [r.lc for r in lc_population if r.lc > 0]
     ts.lc_min = min(lcs) if lcs else 0.0
 
     # --- pilot points (S7F 12), stage by stage -------------------------

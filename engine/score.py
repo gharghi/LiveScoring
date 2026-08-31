@@ -19,8 +19,8 @@ from dataclasses import dataclass, field
 from .gap import GapParams
 from .geo import in_zone, zone_crossing
 from .rules import start_selection
-from .rules.distance_flown import distance_flown
 from .rules.distance_flown import distance_to_goal as rules_distance_to_goal
+from .rules.route import optimise_route, polish_route, route_length
 from .igc import Fix
 from .task import CompiledTask
 
@@ -40,11 +40,22 @@ LANDING_RADIUS_M = 100.0
 LANDING_ALTITUDE_RANGE_M = 80.0
 LANDING_SCAN_STEP_S = 5
 LANDING_AFTER_START_DELAY_S = 60
+LANDING_DISTANCE_STABILIZE_S = 15
 
 # Each candidate start costs a full replay of the pilot's track. A task whose
 # SSS is re-crossed during the course can generate dozens; evaluating all of
 # them turns a 4 ms pilot into a 200 ms one for no change in result.
 MAX_START_CANDIDATES = start_selection.MAX_START_CANDIDATES
+
+# The state-machine pass keeps a fast fixed-tail approximation for progress.
+# That is good enough for live ordering, but it is not the official S7F 9.3
+# landed-out distance when a remaining cylinder is large: the shortest remaining
+# path must be re-optimised from the pilot's actual position. We run this exact
+# pass after the timing decisions are known. Sampling keeps live scoring usable;
+# every control-zone tag and the chosen distance fix are always included.
+EXACT_PROGRESS_SAMPLE_S = 5
+EXACT_ROUTE_INITIAL_ITERATIONS = 80
+EXACT_ROUTE_POLISH_ITERATIONS = 12
 
 
 @dataclass(slots=True)
@@ -166,6 +177,150 @@ def remaining_to_goal(task: CompiledTask, f: Fix, next_wp: int) -> float:
     w = task.waypoints[next_wp]
     return rules_distance_to_goal(f.x, f.y, w.x, w.y, w.measure,
                                   task.remaining[next_wp])
+
+
+def _exact_remaining_route(task: CompiledTask, f: Fix, next_wp: int,
+                           stop_wp: int,
+                           cache: dict[tuple[int, int],
+                                       tuple[list[float], list[float]]]) -> float:
+    """Optimised remaining route from this fix through unreached zones.
+
+    S7F 9.3 distance for a landed-out pilot is based on the shortest remaining
+    route from the pilot's actual position, not on the task's pre-optimised
+    waypoint tags. GlideComp documents the same rule in `optimizeRemainingRoute`:
+    position + unreached control zones + goal are solved as their own route.
+
+    `cache` keeps one polished route shape per waypoint span. For the next fix
+    in the same span we reuse that shape, replace only the anchor with the new
+    fix, and run a short polish instead of the full DP seed search.
+    """
+    if next_wp > stop_wp:
+        return 0.0
+
+    key = (next_wp, stop_wp)
+    pts = [(f.x, f.y, 0.0)] + [
+        (w.x, w.y, w.measure) for w in task.waypoints[next_wp:stop_wp + 1]
+    ]
+    cached = cache.get(key)
+    if cached is None:
+        px, py = optimise_route(
+            pts, 0, iterations=EXACT_ROUTE_INITIAL_ITERATIONS)
+    else:
+        px, py = cached
+        px = [f.x] + px[1:]
+        py = [f.y] + py[1:]
+        px, py = polish_route(
+            pts, px, py, 0, iterations=EXACT_ROUTE_POLISH_ITERATIONS,
+            eps=1e-3)
+    cache[key] = (px, py)
+    return route_length(px, py, 0)
+
+
+def _apply_exact_progress(task: CompiledTask, fixes: list[Fix], now: float,
+                          params: GapParams, r: PilotResult,
+                          trace: dict | None = None) -> PilotResult:
+    """Replace approximate progress with exact S7F 9.3 remaining-route progress.
+
+    This intentionally does not select starts, validate sectors, or decide ESS /
+    goal times. Those decisions stay in the tested replay state machine above.
+    This pass only re-measures progress from already-valid state transitions.
+    """
+    if not fixes or r.start_fix_index < 0:
+        return r
+
+    if r.landing_time is not None:
+        # Landing is inferred by looking FORWARD over a stationary window. The
+        # first fix in that window is the safe cutoff for validating later task
+        # sectors, but published scorers commonly use the stabilized landing
+        # cluster for outlanding distance; using only the first GPS point can
+        # lose tens of metres to touchdown jitter. Cap the distance scan at a
+        # short stabilization interval, not at later retrieve-car movement.
+        state_cutoff = min(float(now), float(r.landing_time))
+        distance_cutoff = min(
+            float(now), float(r.landing_time + LANDING_DISTANCE_STABILIZE_S))
+    else:
+        state_cutoff = distance_cutoff = min(float(now), float(r.last_t or now))
+    if task.goal_deadline is not None:
+        state_cutoff = min(state_cutoff, float(task.goal_deadline))
+        distance_cutoff = min(distance_cutoff, float(task.goal_deadline))
+    cutoff = max(state_cutoff, distance_cutoff)
+
+    start = r.start_fix_index
+    if start >= len(fixes):
+        return r
+
+    tag_fix = r.tag_fix_index or [-1] * len(task.waypoints)
+    tag_fixes = {i for i in tag_fix if i >= start}
+    if r.dist_fix_index >= start:
+        tag_fixes.add(r.dist_fix_index)
+    if r.landing_fix_index >= start:
+        tag_fixes.add(r.landing_fix_index)
+
+    distance_goal = r.goal_time is None
+    lead_until = float(r.ess_time if r.ess_time is not None else state_cutoff)
+    do_leading = lead_until >= fixes[start].t
+
+    next_wp = task.start_index + 1
+    min_remaining = 0.0 if r.goal_time is not None else float("inf")
+    min_fix = r.dist_fix_index
+    min_to_ess = task.speed_distance / 1000.0
+    lead_samples: list[tuple[float, float]] = []
+    cache: dict[tuple[int, int], tuple[list[float], list[float]]] = {}
+    last_eval_t = -10**18
+
+    for i in range(start, len(fixes)):
+        f = fixes[i]
+        ft = float(f.t)
+        if ft > cutoff:
+            break
+
+        while (next_wp <= task.goal_index
+               and next_wp < len(tag_fix)
+               and tag_fix[next_wp] >= 0
+               and tag_fix[next_wp] <= i):
+            next_wp += 1
+
+        mandatory = i in tag_fixes or i == start
+        sampled = ft - last_eval_t >= EXACT_PROGRESS_SAMPLE_S
+        if not mandatory and not sampled:
+            continue
+        last_eval_t = ft
+
+        if distance_goal and ft <= distance_cutoff:
+            rem_goal = _exact_remaining_route(
+                task, f, next_wp, task.goal_index, cache)
+            if rem_goal < min_remaining:
+                min_remaining = rem_goal
+                min_fix = i
+
+        if do_leading and ft <= lead_until:
+            if next_wp > task.ess_index:
+                d_ess = 0.0
+            else:
+                d_ess = _exact_remaining_route(
+                    task, f, next_wp, task.ess_index, cache) * 0.001
+            if d_ess < min_to_ess:
+                min_to_ess = d_ess
+                lead_samples.append((ft - task.first_gate, d_ess))
+
+    if distance_goal and min_remaining < float("inf"):
+        raw = max(0.0, task.total_distance - min_remaining)
+        r.raw_distance = raw
+        r.distance = max(params.minimum_distance, raw)
+        r.dist_fix_index = min_fix
+        if trace is not None:
+            trace["min_remaining"] = min_remaining
+            trace["exact_progress"] = {
+                "sample_s": EXACT_PROGRESS_SAMPLE_S,
+                "fix": min_fix,
+                "remaining": min_remaining,
+                "formula": "taskDistance - optimizeRemainingRoute(position, unreached zones, goal)",
+            }
+
+    r.lead_samples = lead_samples
+    r.lead_area = None
+    r.lead_min_to_ess = 0.0
+    return r
 
 
 def _segment_reaches_radius(ax: float, ay: float, bx: float, by: float,
@@ -706,12 +861,14 @@ def score_pilot(task: CompiledTask, fixes: list[Fix], now: float,
     """
     if trace is None:
         initial = _score_pilot_core(task, fixes, now, params, None)
-        return _score_until_landing_if_needed(task, fixes, now, params, initial)
+        final = _score_until_landing_if_needed(
+            task, fixes, now, params, initial)
+        return _apply_exact_progress(task, fixes, now, params, final, None)
 
     # Keep trace deterministic: first decide the cutoff without recording
     # events, then record only the final scored pass.
     initial = _score_pilot_core(task, fixes, now, params, None)
     final = _score_until_landing_if_needed(task, fixes, now, params, initial, trace)
     if final is initial:
-        return _score_pilot_core(task, fixes, now, params, trace)
-    return final
+        final = _score_pilot_core(task, fixes, now, params, trace)
+    return _apply_exact_progress(task, fixes, now, params, final, trace)

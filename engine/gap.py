@@ -33,7 +33,9 @@ from .rules import (Allocation, GapParams, Penalty, allocate,  # noqa: F401
                     distance_validity, early_start_distance,
                     ess_no_goal_factor, goal_altitude_factor, launch_validity,
                     leading_coefficient, leading_factor, leading_from_partial,
-                    leading_partial, leading_points, leading_weight,
+                    leading_from_partial_hump_v2a,
+                    leading_partial, leading_partial_hump_v2a,
+                    leading_points, leading_weight,
                     load_penalties, scored_distance, speed_fraction,
                     time_points, time_validity, weight_integral)
 
@@ -44,7 +46,9 @@ __all__ = [
     "distance_points", "time_points", "speed_fraction",
     "arrival_weight", "available_points",
     "leading_points", "leading_coefficient", "leading_factor",
-    "leading_partial", "leading_from_partial", "leading_weight",
+    "leading_partial", "leading_from_partial",
+    "leading_partial_hump_v2a", "leading_from_partial_hump_v2a",
+    "leading_weight",
     "weight_integral", "goal_altitude_factor",
     "ess_no_goal_factor",
 ]

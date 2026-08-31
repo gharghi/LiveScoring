@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import math
 
-from engine.rules.points_leading import (leading_coefficient,
+from engine.rules.points_leading import (hump_v2a_weight, leading_coefficient,
+                                         leading_from_partial_hump_v2a,
                                          leading_factor,
                                          leading_partial,
+                                         leading_partial_hump_v2a,
                                          leading_from_partial,
                                          leading_weight, weight_integral)
 import engine.rules.s7f_12_pilot_points as S12
@@ -110,6 +112,27 @@ def run() -> list[tuple[str, bool, str]]:
                                - leading_from_partial(*leading_partial(s, sd), sd, mt)))
     out.append(("12.3.1 leadingArea and missingArea split exactly", worst == 0.0,
                 f"200 random tracks, worst difference {worst:.3e}"))
+
+    # SVL/FS HUMP_V2A is an opt-in historical progress curve. It is not the
+    # modern weighted S7F curve above, so pin its separate midpoint-progress
+    # calculation rather than letting future cleanups silently merge the two.
+    hump_ss = 50.0
+    hump_samples = [(10.0, 40.0), (20.0, 30.0), (30.0, 30.0), (40.0, 20.0)]
+    hump_area, hump_min = leading_partial_hump_v2a(hump_samples, hump_ss)
+    expected_hump_area = (
+        10.0 * 10.0 * hump_v2a_weight(45.0 / hump_ss)
+        + 20.0 * 10.0 * hump_v2a_weight(35.0 / hump_ss)
+        + 40.0 * 10.0 * hump_v2a_weight(25.0 / hump_ss)
+    )
+    out.append(("12.3.1 HUMP_V2A uses point-weighted midpoint progress",
+                abs(hump_area - expected_hump_area) < 1e-12
+                and hump_min == 20.0,
+                f"area {hump_area:.6f}, minToESS {hump_min:.1f} km"))
+    out.append(("12.3.1 HUMP_V2A landout tail is opt-in and monotonic",
+                leading_from_partial_hump_v2a(hump_area, hump_min, hump_ss, 5000.0, 1000.0)
+                > leading_from_partial_hump_v2a(hump_area, hump_min, hump_ss, 3000.0, 1000.0),
+                "more field time after the pilot's last progress gives a "
+                "larger LC, i.e. fewer leading points"))
 
     # --- 12.3.1 maxTime ---------------------------------------------------
     old_rule = S12.MAX_TIME_RULE

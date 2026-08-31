@@ -174,7 +174,15 @@ def _task_page_config(page, source_timezone):
     if len(turnpoints) < 2: raise RuntimeError("could not parse task waypoints")
     # SVL/RFAE published task distances match WGS84 here. FAI_SPHERE makes
     # this task about 0.18% short: 76.236 km instead of the official 76.37 km.
-    xctsk = {"earthModel":"WGS84", "turnpoints":turnpoints,
+    #
+    # SVL 1.158's displayed Task 4 distances also line up with its older
+    # relative cylinder tolerance convention: outer = max(r * 1.001, r + 5m).
+    # Keep this task-local so the engine's default 2026 flat +5 m tolerance is
+    # unchanged for native inputs.
+    xctsk = {"earthModel":"WGS84", "radiusTolerance":0.001,
+             "absoluteTolerance":5.0, "measurementRadius":"outer",
+             "progressCurve":"HUMP_V2A",
+             "turnpoints":turnpoints,
              "sss":{"type":"RACE", "direction":"EXIT", "timeGates":[gate_utc+":00Z"]},
              "goal":{"type":"CYLINDER", "deadline":deadline_utc+":00Z"}}
     return date_str, day, gate, deadline, gate_utc, deadline_utc, xctsk

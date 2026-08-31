@@ -268,7 +268,9 @@ from .penalties import Penalty, apply_penalties, load_penalties    # noqa: E402
 # 168.0110437 out of a 168.0 pot.
 from .points_leading import (leading_coefficient,  # noqa: E402
                              leading_factor, leading_from_partial,
-                             leading_partial, leading_weight, weight_integral)
+                             leading_from_partial_hump_v2a,
+                             leading_partial, leading_partial_hump_v2a,
+                             leading_weight, weight_integral)
 from .s7f_10_task_validity import (best_time_to_ess,  # noqa: E402
                                    distance_validity, launch_validity,
                                    task_validity, time_validity)
@@ -289,7 +291,9 @@ __all__ = [
     "launch_validity", "distance_validity", "time_validity",
     "distance_points", "time_points", "speed_fraction",
     "leading_points", "leading_coefficient", "leading_factor",
-    "leading_partial", "leading_from_partial", "leading_weight", "weight_integral",
+    "leading_partial", "leading_from_partial",
+    "leading_partial_hump_v2a", "leading_from_partial_hump_v2a",
+    "leading_weight", "weight_integral",
     "goal_altitude_factor", "ess_no_goal_factor",
     "Penalty", "apply_penalties", "load_penalties",
 ]

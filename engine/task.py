@@ -17,10 +17,9 @@ import math
 from dataclasses import dataclass, field
 
 from .geo import Projection, dist, haversine
-from .rules.cylinder import (ABSOLUTE_TOLERANCE, RADIUS_TOLERANCE,  # noqa: F401
-                             inner_radius, outer_radius)
+from .rules.cylinder import ABSOLUTE_TOLERANCE, RADIUS_TOLERANCE  # noqa: F401
 from .rules.route import leg_lengths, optimise_route, remaining_table
-from .rules.s7f_09_control_zones import measurement_radius
+from .rules.s7f_09_control_zones import MEASUREMENT_RADIUS
 
 TAKEOFF, SSS, TURNPOINT, ESS, GOAL = "TAKEOFF", "SSS", "TURNPOINT", "ESS", "GOAL"
 
@@ -66,6 +65,10 @@ class CompiledTask:
     goal_type: str
     goal_elevated: bool = False    # S7F 13.1
     goal_elevation: float = 300.0  # m, default 300, max 1000
+    radius_tolerance: float = RADIUS_TOLERANCE
+    absolute_tolerance: float = ABSOLUTE_TOLERANCE
+    measurement_radius_policy: str = MEASUREMENT_RADIUS
+    progress_curve: str = "WEIGHTED"
 
     # Where the SCORED route begins. Waypoint 0 -- the takeoff -- unless the
     # task has no point before the SSS, in which case it is the SSS. Distinct
@@ -126,6 +129,45 @@ def parse_xctsk(path: str, date_epoch: int, gate_override: int | None = None,
     tps = doc["turnpoints"]
     n = len(tps)
 
+    def _snake(name: str) -> str:
+        return "".join("_" + c.lower() if c.isupper() else c for c in name).lstrip("_")
+
+    def _fraction(name: str, default: float) -> float:
+        raw_value = doc.get(name, doc.get(_snake(name), default))
+        value = float(raw_value)
+        # Accept both the S7F fraction form (0.001) and a UI percentage form
+        # (0.1). Values above 1% are almost certainly percent notation.
+        return value / 100.0 if abs(value) > 0.01 else value
+
+    radius_tolerance = _fraction("radiusTolerance", RADIUS_TOLERANCE)
+    absolute_tolerance = float(doc.get(
+        "absoluteTolerance", doc.get("absolute_tolerance", ABSOLUTE_TOLERANCE)))
+    measurement_policy = str(doc.get(
+        "measurementRadius", doc.get("measurement_radius", MEASUREMENT_RADIUS)
+    )).lower()
+    progress_curve = str(doc.get(
+        "progressCurve", doc.get("progress_curve", "WEIGHTED")
+    )).upper()
+
+    def _inner_radius(radius: float) -> float:
+        return min(radius * (1.0 - radius_tolerance),
+                   radius - absolute_tolerance)
+
+    def _outer_radius(radius: float) -> float:
+        return max(radius * (1.0 + radius_tolerance),
+                   radius + absolute_tolerance)
+
+    def _measurement_radius(radius: float) -> float:
+        if measurement_policy == "outer":
+            return _outer_radius(radius)
+        if measurement_policy == "inner":
+            return _inner_radius(radius)
+        if measurement_policy != "nominal":
+            raise ValueError(
+                "measurementRadius must be 'nominal', 'outer' or 'inner', "
+                f"got {measurement_policy!r}")
+        return radius
+
     has_takeoff = any(tp.get("type") == "TAKEOFF" for tp in tps)
     sss_i = next((i for i, tp in enumerate(tps) if tp.get("type") == "SSS"), None)
 
@@ -143,9 +185,9 @@ def parse_xctsk(path: str, date_epoch: int, gate_override: int | None = None,
                 lon=float(w["lon"]),
                 radius=r,
                 raw_radius=r,
-                inner=inner_radius(r),
-                outer=outer_radius(r),
-                measure=measurement_radius(r),
+                inner=_inner_radius(r),
+                outer=_outer_radius(r),
+                measure=_measurement_radius(r),
             )
         )
 
@@ -194,6 +236,10 @@ def parse_xctsk(path: str, date_epoch: int, gate_override: int | None = None,
         else bool(goal.get("elevated", False)),
         goal_elevation=min(1000.0, float(elevated_goal if elevated_goal else
                                          goal.get("elevation", 300.0) or 300.0)),
+        radius_tolerance=radius_tolerance,
+        absolute_tolerance=absolute_tolerance,
+        measurement_radius_policy=measurement_policy,
+        progress_curve=progress_curve,
         route_start=0,
     )
     optimise(task)

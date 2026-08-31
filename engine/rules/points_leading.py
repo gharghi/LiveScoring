@@ -133,6 +133,55 @@ def weight_integral(a: float, b: float) -> float:
 # --- the leading coefficient ---------------------------------------------
 
 
+def hump_v2a_weight(remaining_fraction: float) -> float:
+    """SVL/FS HUMP_V2A point weight, expressed over remaining-to-ESS fraction."""
+    p = 0.0 if remaining_fraction < 0.0 else (
+        1.0 if remaining_fraction > 1.0 else remaining_fraction)
+    return _weight_rising(p) * _weight_falling(p)
+
+
+def leading_partial_hump_v2a(samples, speed_distance_km: float) -> tuple[float, float]:
+    """SVL/FS HUMP_V2A-style progress area.
+
+    This is intentionally separate from the S7F 2026 weighted integral above.
+    RFAE/SVL Task 4 declares `Progress curve = HUMP_V2A`; probing against that
+    page shows this midpoint point-weighted area reproduces the goal pilots'
+    leading points and the published best progress coefficient.
+    """
+    if speed_distance_km <= 0.0:
+        return 0.0, 0.0
+    prev = speed_distance_km
+    area = 0.0
+    min_to_ess = speed_distance_km
+    for t, d in samples:
+        d = 0.0 if d < 0.0 else (speed_distance_km if d > speed_distance_km else d)
+        if d < prev:
+            remaining_fraction = (prev + d) / (2.0 * speed_distance_km)
+            area += t * (prev - d) * hump_v2a_weight(remaining_fraction)
+            prev = d
+            min_to_ess = d
+    return area, min_to_ess
+
+
+def leading_from_partial_hump_v2a(area: float, min_to_ess: float,
+                                  speed_distance_km: float, max_time: float,
+                                  last_task_time: float) -> float:
+    """Finish an SVL/FS HUMP_V2A LC from its per-pilot area.
+
+    The landout tail is the closest source-backed/current-fixture match found
+    so far: remaining field time times the AirScore/SVL falling term. It is not
+    a fitted scale factor; the mode remains opt-in because native S7F weighted
+    scoring should not inherit SVL-specific behavior.
+    """
+    if speed_distance_km <= 0.0:
+        return 0.0
+    if min_to_ess > 0.0:
+        remaining_fraction = min_to_ess / speed_distance_km
+        falling = _weight_falling(remaining_fraction)
+        area += max(0.0, max_time - last_task_time) * min_to_ess * falling
+    return area / (1800.0 * speed_distance_km)
+
+
 def leading_partial(samples, speed_distance_km: float) -> tuple[float, float]:
     """The half of the leading area that does not depend on the field.
 

@@ -36,6 +36,48 @@ def run() -> list[tuple[str, bool, str]]:
     out.append(("9.1.1 the zone is an annulus, inner < outer",
                 all(inner_radius(r) < outer_radius(r)
                     for r in (100.0, 17000.0)), "inner < outer at both extremes"))
+    try:
+        import json
+        import tempfile
+        from engine.task import parse_xctsk
+
+        doc = {
+            "earthModel": "WGS84",
+            "radiusTolerance": 0.001,
+            "absoluteTolerance": 5.0,
+            "measurementRadius": "outer",
+            "turnpoints": [
+                {"type": "TAKEOFF", "radius": 400,
+                 "waypoint": {"name": "TO", "lat": 42.0, "lon": 1.0}},
+                {"type": "SSS", "radius": 1000,
+                 "waypoint": {"name": "SSS", "lat": 42.01, "lon": 1.0}},
+                {"type": "GOAL", "radius": 10000,
+                 "waypoint": {"name": "GOAL", "lat": 42.2, "lon": 1.0}},
+            ],
+            "sss": {"type": "RACE", "direction": "EXIT",
+                    "timeGates": ["11:00:00Z"]},
+            "goal": {"type": "CYLINDER", "deadline": "15:00:00Z"},
+        }
+        with tempfile.TemporaryDirectory() as td:
+            path = f"{td}/task.xctsk"
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(doc, fh)
+            task = parse_xctsk(path, 0)
+        w = task.waypoints[-1]
+        ok = (
+            task.radius_tolerance == 0.001
+            and task.absolute_tolerance == 5.0
+            and task.measurement_radius_policy == "outer"
+            and abs(w.outer - 10010.0) < 1e-9
+            and abs(w.inner - 9990.0) < 1e-9
+            and abs(w.measure - w.outer) < 1e-9
+        )
+        detail = (f"r=10,000 m -> inner {w.inner:.1f}, outer {w.outer:.1f}, "
+                  f"measure {w.measure:.1f}")
+    except Exception as exc:
+        ok = False
+        detail = repr(exc)
+    out.append(("9.1.1 task files can override radius tolerance", ok, detail))
 
     # --- 9.3  the measurement radius policy -------------------------------
     was = S9.MEASUREMENT_RADIUS

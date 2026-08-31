@@ -788,18 +788,42 @@ def check_measurement_radius(task, tracks, params, now) -> Check:
 
 
 def check_tolerance(task) -> Check:
-    """Every zone is the nominal radius ±5 m exactly (S7F 9.1.1, tolerance 0.0%)."""
-    from engine.rules.s7f_09_control_zones import MEASUREMENT_RADIUS, measurement_radius
+    """Every zone matches the task's configured S7F 9.1.1 tolerance."""
+    from engine.rules.s7f_09_control_zones import (
+        ABSOLUTE_TOLERANCE, MEASUREMENT_RADIUS, RADIUS_TOLERANCE)
+
+    radius_tolerance = getattr(task, "radius_tolerance", RADIUS_TOLERANCE)
+    absolute_tolerance = getattr(task, "absolute_tolerance", ABSOLUTE_TOLERANCE)
+    measurement_policy = getattr(
+        task, "measurement_radius_policy", MEASUREMENT_RADIUS)
+
+    def inner(radius: float) -> float:
+        return min(radius * (1.0 - radius_tolerance),
+                   radius - absolute_tolerance)
+
+    def outer(radius: float) -> float:
+        return max(radius * (1.0 + radius_tolerance),
+                   radius + absolute_tolerance)
+
+    def measure(radius: float) -> float:
+        if measurement_policy == "outer":
+            return outer(radius)
+        if measurement_policy == "inner":
+            return inner(radius)
+        return radius
 
     bad = [w.name for w in task.waypoints
-           if abs(w.outer - (w.raw_radius + 5.0)) > 1e-9
-           or abs(w.inner - (w.raw_radius - 5.0)) > 1e-9
-           or abs(w.measure - measurement_radius(w.raw_radius)) > 1e-9]
-    return ("every tolerance zone is radius ±5 m exactly (S7F 9.1.1)", not bad,
+           if abs(w.outer - outer(w.raw_radius)) > 1e-9
+           or abs(w.inner - inner(w.raw_radius)) > 1e-9
+           or abs(w.measure - measure(w.raw_radius)) > 1e-9]
+    return ("every tolerance zone matches the task configuration (S7F 9.1.1)",
+            not bad,
             f"{bad}" if bad else f"{len(task.waypoints)} zones, "
             f"radii {min(w.raw_radius for w in task.waypoints):,.0f}–"
             f"{max(w.raw_radius for w in task.waypoints):,.0f} m; "
-            f"distance measured to '{MEASUREMENT_RADIUS}' (S7F 9.3)")
+            f"radiusTolerance={radius_tolerance:.4%}, "
+            f"absoluteTolerance={absolute_tolerance:g} m, "
+            f"distance measured to '{measurement_policy}' (S7F 9.3)")
 
 
 # --- driver ---------------------------------------------------------------

@@ -77,9 +77,13 @@ def _worker(group: tuple[str, list[str]]):
     # 5,000 of them; pickling 129 pilots' worth cost more than the parallelism
     # saved. The remaining field-wide half (missingArea, which needs maxTime)
     # is done in the parent exactly as it is on the serial path.
-    from .gap import leading_partial
-    r.lead_area, r.lead_min_to_ess = leading_partial(
-        r.lead_samples, _TASK.speed_distance / 1000.0)
+    from .gap import leading_partial, leading_partial_hump_v2a
+    if getattr(_TASK, "progress_curve", "WEIGHTED").upper() == "HUMP_V2A":
+        r.lead_area, r.lead_min_to_ess = leading_partial_hump_v2a(
+            r.lead_samples, _TASK.speed_distance / 1000.0)
+    else:
+        r.lead_area, r.lead_min_to_ess = leading_partial(
+            r.lead_samples, _TASK.speed_distance / 1000.0)
     r.lead_samples = []
 
     # How far this tracklog is from the task, for the outlier filter in run.py.
