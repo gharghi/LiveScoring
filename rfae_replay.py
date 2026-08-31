@@ -319,6 +319,9 @@ def main():
     ap.add_argument("--batch-points", "--max-points", dest="batch_points", type=int, default=1000,
                     help="maximum newly unsent fixes per API request (default: 1000)")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--results-only", action="store_true",
+                    help="print the server's own classification and skip the comparison "
+                         "against the published results entirely")
     ap.add_argument("--score-tolerance", type=float, default=0.15,
                     help="maximum absolute score difference in points (default: 0.15)")
     ap.add_argument("--wait-timeout", type=float, default=180,
@@ -450,6 +453,29 @@ def main():
 
     rows = result.get("pilots") or result.get("ranking") or []
     server = {str(r.get("pilot_id")): r for r in rows if r.get("pilot_id") is not None}
+
+    if args.results_only:
+        (run/"results.json").write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+        ts = result.get("task_score") or {}
+        print(f"Task {task_id}: {len(rows)} pilots scored · accepted={accepted} duplicates={duplicates} "
+              f"· status={result.get('status')} scored_epoch={result.get('processed_epoch')}")
+        if ts:
+            print("  " + "  ".join(f"{k}={v:g}" if isinstance(v, (int, float)) else f"{k}={v}"
+                                   for k, v in sorted(ts.items())))
+        print(f"  {'rank':>4}  {'pilot':>6}  {'score':>7}  {'dist_km':>8}  {'km/h':>6}  {'ess':>3} {'goal':>4}  state")
+        for r in sorted(rows, key=lambda z: (z.get("rank") is None, z.get("rank") or 0)):
+            speed = r.get("speed_kmh")
+            print(f"  {str(r.get('rank') or '-'):>4}  {str(r.get('pilot_id')):>6}  "
+                  f"{float(r.get('score') or 0):>7.1f}  {float(r.get('distance_m') or 0)/1000:>8.2f}  "
+                  f"{(f'{float(speed):.1f}' if speed else '-'):>6}  "
+                  f"{('Y' if r.get('ess') else '-'):>3} {('Y' if r.get('goal') else '-'):>4}  "
+                  f"{r.get('state','')}")
+        if latencies:
+            q = sorted(latencies)
+            print(f"HTTP performance: p50={q[len(q)//2]:.0f}ms p95={q[min(len(q)-1,int(len(q)*.95))]:.0f}ms max={q[-1]:.0f}ms")
+        print(f"Results: {run/'results.json'}")
+        return 0
+
     official = meta["official_results"]
     source_pilot_ids = {p["pilot_id"] for p in pilots}
     # Published pages can contain pilots without a linked IGC (usually a
