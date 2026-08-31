@@ -20,6 +20,7 @@ HEALTH_URL=${HEALTH_URL:-http://127.0.0.1:8100/health}
 SERVICE_USER=${SERVICE_USER:-livescoring}
 REF=${1:-origin/main}
 SERVICES=(livescoring-api.service livescoring-scorer.service)
+DEPLOY_GIT_SSH_KEY=${DEPLOY_GIT_SSH_KEY:-/root/.ssh/id_ed25519}
 
 log() { printf '[deploy %s] %s\n' "$(date -Is)" "$*"; }
 
@@ -33,6 +34,10 @@ cd "$REPO_DIR"
 
 PREV=$(git rev-parse HEAD)
 log "repo $REPO_DIR at $PREV, requested $REF"
+
+if [ -r "$DEPLOY_GIT_SSH_KEY" ]; then
+    export GIT_SSH_COMMAND="ssh -i $DEPLOY_GIT_SSH_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+fi
 
 git fetch --prune --quiet origin
 TARGET=$(git rev-parse "$REF")
