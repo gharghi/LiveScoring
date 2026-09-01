@@ -165,20 +165,30 @@ def leading_partial_hump_v2a(samples, speed_distance_km: float) -> tuple[float, 
 
 def leading_from_partial_hump_v2a(area: float, min_to_ess: float,
                                   speed_distance_km: float, max_time: float,
-                                  last_task_time: float) -> float:
+                                  last_task_time: float,
+                                  best_time: float | None = None) -> float:
     """Finish an SVL/FS HUMP_V2A LC from its per-pilot area.
 
-    The landout tail is the closest source-backed/current-fixture match found
-    so far: remaining field time times the AirScore/SVL falling term. It is not
-    a fitted scale factor; the mode remains opt-in because native S7F weighted
-    scoring should not inherit SVL-specific behavior.
+    SVL 1.158's HUMP_V2A landout rows do not use the modern S7F
+    `maxTime - pilotTime` tail.  RFAE Task 4's published coefficients imply an
+    effective landout tail of:
+
+        bestTime / 2 + 100 s/km * minToESS
+
+    applied through the same HUMP falling term.  This stays opt-in because
+    native S7F weighted scoring must not inherit SVL-specific compatibility
+    behaviour.
     """
     if speed_distance_km <= 0.0:
         return 0.0
     if min_to_ess > 0.0:
         remaining_fraction = min_to_ess / speed_distance_km
         falling = _weight_falling(remaining_fraction)
-        area += max(0.0, max_time - last_task_time) * min_to_ess * falling
+        if best_time and best_time > 0.0:
+            tail_time = best_time * 0.5 + 100.0 * min_to_ess
+        else:
+            tail_time = max(0.0, max_time - last_task_time)
+        area += tail_time * min_to_ess * falling
     return area / (1800.0 * speed_distance_km)
 
 

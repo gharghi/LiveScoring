@@ -229,12 +229,26 @@ Latest Task 4 comparison:
 - Average speed: `17/17` within tolerance
 - Time points: exact
 - Distance points: `47/50` within ±0.1 pt, worst `-0.20 pt`
-- Leading points: `16/38` within ±0.1 pt, mean absolute delta `5.932 pt`
-- Total score: `20/50` within ±0.1 pt, mean absolute delta `4.514 pt`
+- Leading points: `17/38` within ±0.1 pt, mean absolute delta `0.345 pt`,
+  worst `+1.10 pt`
+- Total score: `20/50` within ±0.1 pt, mean absolute delta `0.268 pt`,
+  worst `+1.00 pt`
 
 The HUMP_V2A midpoint progress area fixes the leading-coefficient family and
-matches goal-pilot leading to display rounding. The remaining error is confined
-to landed-out leading coefficients. The tested source-backed tails were:
+matches goal-pilot leading to display rounding. The large landed-out mismatch
+was caused by using the modern S7F `maxTime - pilotTime` missing-area tail.
+SVL 1.158 Task 4 rows imply a different HUMP landout tail:
+
+```text
+effectiveTailSeconds = bestTime / 2 + 100 s/km * minToESS
+```
+
+For this task, `bestTime / 2` is `4321 s`, effectively the same as
+`0.8 * nominalTime` (`4320 s`), and `100 s/km` is `36 km/h`. Applying that tail
+through the same HUMP falling term reduced the worst leading-point error from
+about `46 pt` to `1.1 pt`.
+
+The tested alternatives before this fix were:
 
 - no landout tail
 - own last-task-time tail
@@ -243,21 +257,22 @@ to landed-out leading coefficients. The tested source-backed tails were:
 - task-deadline tail
 - AirScore-style replacement of task-close tail with last-arrival tail
 
-None reproduces all SVL landout rows. The current implementation keeps the
-closest identified source-backed behavior as opt-in and documents it as
-unfinished for SVL landouts.
+None came close to SVL Task 4. The current behavior remains opt-in to
+`HUMP_V2A`; the normal weighted S7F path is unchanged. The remaining mismatch is
+small but not zero, so the next useful check is another SVL/RFAE fixture with
+`HUMP_V2A` to confirm whether the `100 s/km` term is a stable rule constant or a
+derived value.
 
 ## Next debug steps
 
-1. Add a task/competition parameter for `progressCurve`, defaulting to the
+1. Preserve `progressCurve` as an opt-in task parameter, defaulting to the
    current S7F weighted mode for native inputs.
-2. Implement `HUMP_V2A` as a separate leading-coefficient mode, not by changing
-   the modern weighted formula globally.
-3. Preserve the verified exact S7F 9.3 distance/time behavior.
-4. Re-run Task 4 and require:
+2. Preserve the verified exact S7F 9.3 distance/time behavior.
+3. Re-run Task 4 and require:
    - official task distances unchanged: `71.33 / 75.37 / 76.37 km`
    - scored distance still `50/50` within ±0.05 km
    - ESS/final time still `17/17` exact
    - goal-pilot leading remains exact
-5. Resolve the landed-out HUMP tail from source behavior or another clean SVL
-   fixture before treating the total score as fully matched.
+   - landed-out leading remains within about `1 pt`
+4. Validate one more clean SVL/RFAE task before treating the HUMP landout tail
+   as fully matched.

@@ -111,7 +111,8 @@ def score_task(task: CompiledTask, results: list[PilotResult], params: GapParams
         r.lc = rules.s7f_12_pilot_points.leading_coefficient(
             r.lead_area, r.lead_min_to_ess, sd_km, r.max_time,
             progress_curve=progress_curve,
-            last_task_time=r.last_task_time)
+            last_task_time=r.last_task_time,
+            best_time=ts.best_time)
     lc_population = (
         [r for r in started if r.ess_time is not None]
         if progress_curve == "HUMP_V2A" and ts.pilots_ess > 0

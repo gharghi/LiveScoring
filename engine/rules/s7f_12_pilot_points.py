@@ -242,11 +242,13 @@ def max_time_for(pilot_last_task_time: float, last_ess_task_time: float,
 def leading_coefficient(lead_area: float, min_to_ess: float,
                         speed_distance_km: float, max_time: float,
                         *, progress_curve: str = "WEIGHTED",
-                        last_task_time: float = 0.0) -> float:
+                        last_task_time: float = 0.0,
+                        best_time: float | None = None) -> float:
     """S7F 12.3.1, with the LC_SCALE experiment applied. See the note at top."""
     if progress_curve.upper() == "HUMP_V2A":
         lc = leading_from_partial_hump_v2a(
-            lead_area, min_to_ess, speed_distance_km, max_time, last_task_time)
+            lead_area, min_to_ess, speed_distance_km, max_time,
+            last_task_time, best_time)
     else:
         lc = leading_from_partial(lead_area, min_to_ess, speed_distance_km, max_time)
     return lc * LC_SCALE

@@ -29,6 +29,9 @@ def run() -> list[tuple[str, bool, str]]:
     def hms(h, m, s):
         return h * 3600 + m * 60 + s
 
+    def falling_weight(v: float) -> float:
+        return (1.0 - 10.0 ** (-3.0 * v)) ** 2
+
     # --- 12.2.1 Table 2, all three rows -----------------------------------
     table = [
         ("1:00", hms(1, 0, 0), [(hms(1, 8, 42), 0.80), (hms(1, 26, 7), 0.50),
@@ -133,6 +136,14 @@ def run() -> list[tuple[str, bool, str]]:
                 > leading_from_partial_hump_v2a(hump_area, hump_min, hump_ss, 3000.0, 1000.0),
                 "more field time after the pilot's last progress gives a "
                 "larger LC, i.e. fewer leading points"))
+    tail = (2000.0 * 0.5 + 100.0 * hump_min) * hump_min * falling_weight(
+        hump_min / hump_ss)
+    expected_hump_lc = (hump_area + tail) / (1800.0 * hump_ss)
+    out.append(("12.3.1 HUMP_V2A SVL landout tail uses best-time plus remaining distance",
+                abs(leading_from_partial_hump_v2a(
+                    hump_area, hump_min, hump_ss, 5000.0, 1000.0,
+                    best_time=2000.0) - expected_hump_lc) < 1e-12,
+                f"LC {expected_hump_lc:.6f}"))
 
     # --- 12.3.1 maxTime ---------------------------------------------------
     old_rule = S12.MAX_TIME_RULE
