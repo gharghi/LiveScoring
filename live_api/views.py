@@ -8,6 +8,7 @@ from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 
 from .models import ApiApplication, Competition, Task
+from .explain import explain_competition, explain_pilot, explain_task
 from .storage import insert_task_points, latest_task_classification
 
 
@@ -103,6 +104,7 @@ def openapi(request):
         "/events/{event_id}/tasks/sync": {"post": {"tags": ["Task sync"], "security": [{"ApiKeyAuth": []}], "summary": "Upsert a stable task/day configuration", "parameters": [{"in": "path", "name": "event_id", "required": True, "schema": {"type": "string"}}], "requestBody": {"required": True, "content": {"application/json": {"schema": task_body}}}, "responses": {"200": {"description": "Task accepted"}, "400": {"description": "Validation errors"}, "404": {"description": "Unknown event"}}}},
         "/tasks/{task_id}/points": {"post": {"tags": ["Live tracking"], "security": [{"ApiKeyAuth": []}], "summary": "Push task tracking points and read latest stored classification", "description": "Each point must include epoch (Unix seconds). Django only ingests and fetches stored results. The separate scoring worker updates the classification snapshot continuously.", "parameters": [{"in": "path", "name": "task_id", "required": True, "schema": {"type": "string"}}], "requestBody": {"required": True, "content": {"application/json": {"schema": points_body}}}, "responses": {"200": {"description": "Ingestion acknowledgement and latest stored classification, including received_cutoff_epoch, processed_epoch and scored_epoch"}, "404": {"description": "Unknown task"}}}},
         "/tasks/{task_id}/results": {"get": {"tags": ["Results"], "security": [{"ApiKeyAuth": []}], "summary": "Get the latest calculated task results", "parameters": [{"in": "path", "name": "task_id", "required": True, "schema": {"type": "string"}}], "responses": {"200": {"description": "Current ranking and per-pilot scoring fields", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Classification"}}}}, "404": {"description": "Unknown task"}}}},
+        "/explain": {"get": {"tags": ["Explain"], "security": [{"ApiKeyAuth": []}], "summary": "Protest desk: why a competition, task or pilot scored what it did", "description": "Pass event_id for the competition scope, task_id for the task scope, or task_id together with pilot_id for one pilot. The task and pilot scopes re-run the engine over the whole field and are deliberately slow; every points line carries its S7F reference, its formula and the same formula with the actual numbers substituted.", "parameters": [{"in": "query", "name": "event_id", "required": False, "schema": {"type": "string"}}, {"in": "query", "name": "task_id", "required": False, "schema": {"type": "string"}}, {"in": "query", "name": "pilot_id", "required": False, "schema": {"type": "string"}}], "responses": {"200": {"description": "Explanation for the requested scope"}, "400": {"description": "No scope given, or pilot_id without task_id"}, "404": {"description": "Unknown event, task or pilot"}, "409": {"description": "Task has no geometry or no tracking points yet"}}}},
         "/events/{event_id}/results": {"get": {"tags": ["Results"], "security": [{"ApiKeyAuth": []}], "summary": "Get the latest task results for an event", "parameters": [{"in": "path", "name": "event_id", "required": True, "schema": {"type": "string"}}], "responses": {"200": {"description": "Current ranking"}, "404": {"description": "Unknown event"}}}},
     }
     return JsonResponse({"openapi": "3.0.3", "info": {"title": "LiveScoring Integration API", "version": "3.0.0", "description": "Volandoo event/manga synchronization and live tracking contract."}, "servers": [{"url": "https://ls.buildmycabin.com"}], "components": {"securitySchemes": {"ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-API-Key"}}, "schemas": schemas}, "paths": paths})
@@ -242,6 +244,57 @@ def task_sync(request, event_id):
 @csrf_exempt
 def task_points(request, task_id):
     return manga_points(request, manga_id=task_id)
+
+
+@csrf_exempt
+def explain(request):
+    """Protest desk: why a competition, a task or a pilot scored what it did.
+
+    GET /explain?event_id=E                      → competition scope
+    GET /explain?task_id=T                       → task scope
+    GET /explain?task_id=T&pilot_id=P            → pilot scope
+
+    The task and pilot scopes re-run the engine over the whole field, because
+    the half of a score a pilot usually disputes is field-wide. That is slow
+    on a big task by design; this is a desk tool, not a live path.
+    """
+    if request.method != "GET":
+        return error("method not allowed", 405)
+    app, response = _integration_auth(request)
+    if response:
+        return response
+
+    event_id = request.GET.get("event_id")
+    task_id = request.GET.get("task_id")
+    pilot_id = request.GET.get("pilot_id")
+    if not event_id and not task_id:
+        return error("pass event_id, or task_id (optionally with pilot_id)", 400)
+    if pilot_id and not task_id:
+        return error("pilot_id needs a task_id: a pilot is explained per task", 400)
+
+    started = time.perf_counter()
+    try:
+        if task_id:
+            try:
+                task = Task.objects.select_related("competition").get(
+                    external_manga_id=task_id, competition__owner=app)
+            except Task.DoesNotExist:
+                return error("task not found", 404)
+            payload = (explain_pilot(task, pilot_id) if pilot_id
+                       else explain_task(task))
+        else:
+            try:
+                comp = Competition.objects.get(external_event_id=event_id, owner=app)
+            except Competition.DoesNotExist:
+                return error("event not found", 404)
+            payload = explain_competition(comp)
+    except LookupError as exc:
+        return error(str(exc), 404)
+    except ValueError as exc:
+        return error(str(exc), 409)
+
+    payload["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 1)
+    return JsonResponse(payload)
 
 
 @csrf_exempt

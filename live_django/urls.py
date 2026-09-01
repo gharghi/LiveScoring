@@ -20,4 +20,5 @@ urlpatterns = [
     path("tasks/<str:task_id>/points", views.task_points),
     path("tasks/<str:task_id>/results", views.task_results),
     path("events/<str:event_id>/results", views.event_results),
+    path("explain", views.explain),
 ]
