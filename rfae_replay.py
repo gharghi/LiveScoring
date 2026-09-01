@@ -91,10 +91,129 @@ def parse_official_results(page):
             "rank": int(cells[0]),
             "name": cells[2] if len(cells) > 2 else pilot_id,
             "score": score,
+            "distance_km": _float_cell(cells[8]) if len(cells) > 8 else None,
+            "sss": cells[9] if len(cells) > 9 else "",
+            "ess": cells[10] if len(cells) > 10 else "",
+            "time": cells[11] if len(cells) > 11 else "",
+            "speed_kmh": _float_cell(cells[12]) if len(cells) > 12 else None,
+            "status": cells[13] if len(cells) > 13 else "",
+            "height_m": _float_cell(cells[14]) if len(cells) > 14 else None,
+            "distance_points": _float_cell(cells[15]) if len(cells) > 15 else None,
+            "leading_points": _float_cell(cells[16]) if len(cells) > 16 else None,
+            "time_points": _float_cell(cells[17]) if len(cells) > 17 else None,
         }
     if not official:
         raise RuntimeError("could not parse the published leaderboard")
     return official
+
+
+def _float_cell(value):
+    value = (value or "").strip().replace(",", ".")
+    if not value or value in {"-", "(-)"}:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+def _fmt_num(value, digits=1):
+    if value is None or value == "":
+        return "-"
+    try:
+        return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def _server_scoring(row, key):
+    return (row.get("scoring") or {}).get(key)
+
+
+def print_server_table(rows, *, accepted=0, duplicates=0, result=None, task_id=""):
+    result = result or {}
+    ts = result.get("task_score") or {}
+    print(f"Task {task_id}: {len(rows)} pilots scored · accepted={accepted} duplicates={duplicates} "
+          f"· status={result.get('status')} scored_epoch={result.get('processed_epoch')}")
+    if ts:
+        print("  " + "  ".join(f"{k}={v:g}" if isinstance(v, (int, float)) else f"{k}={v}"
+                               for k, v in sorted(ts.items())))
+    print(f"  {'rank':>4}  {'pilot':>6}  {'score':>7}  {'dist_km':>8}  "
+          f"{'dist_p':>7}  {'time_p':>7}  {'lead_p':>7}  {'lc':>7}  "
+          f"{'km/h':>6}  {'ess':>3} {'goal':>4}  state")
+    for r in sorted(rows, key=lambda z: (z.get("rank") is None, z.get("rank") or 0)):
+        speed = r.get("speed_kmh")
+        lc = _server_scoring(r, "lc")
+        print(f"  {str(r.get('rank') or '-'):>4}  {str(r.get('pilot_id')):>6}  "
+              f"{float(r.get('score') or 0):>7.1f}  {float(r.get('distance_m') or 0)/1000:>8.2f}  "
+              f"{_fmt_num(_server_scoring(r, 'distance_points')):>7}  "
+              f"{_fmt_num(_server_scoring(r, 'time_points')):>7}  "
+              f"{_fmt_num(_server_scoring(r, 'leading_points')):>7}  "
+              f"{_fmt_num(lc, 4):>7}  "
+              f"{(f'{float(speed):.1f}' if speed else '-'):>6}  "
+              f"{('Y' if r.get('ess') else '-'):>3} {('Y' if r.get('goal') else '-'):>4}  "
+              f"{r.get('state','')}")
+    tot = lambda k: sum(float((p.get('scoring') or {}).get(k) or 0) for p in rows)
+    print(f"  {'':>4}  {'TOTAL':>6}  {sum(float(p.get('score') or 0) for p in rows):>7.1f}  {'':>8}  "
+          f"{tot('distance_points'):>7.1f}  {tot('time_points'):>7.1f}  {tot('leading_points'):>7.1f}")
+
+
+def comparison_rows_for_table(comparison, server):
+    for x in sorted(comparison, key=lambda z: (
+            z.get("official_rank") is None, z.get("official_rank") or 999999,
+            z.get("pilot_id") or "")):
+        srv = server.get(str(x.get("pilot_id"))) or {}
+        off = x.get("official") or {}
+        yield x, srv, off
+
+
+def write_comparison_tsv(path, comparison, server):
+    headers = [
+        "pilot_id", "name", "official_rank", "server_rank",
+        "official_score", "server_score", "score_delta",
+        "official_distance_km", "server_distance_km",
+        "official_distance_points", "server_distance_points",
+        "official_time_points", "server_time_points",
+        "official_leading_points", "server_leading_points",
+        "server_lc", "official_speed_kmh", "server_speed_kmh",
+        "server_state", "rank_match", "score_match",
+    ]
+    lines = ["\t".join(headers)]
+    for x, srv, off in comparison_rows_for_table(comparison, server):
+        values = [
+            x.get("pilot_id"), x.get("name"), x.get("official_rank"), x.get("server_rank"),
+            _fmt_num(x.get("official_score")), _fmt_num(x.get("server_score")),
+            _fmt_num(x.get("score_delta")),
+            _fmt_num(off.get("distance_km"), 2), _fmt_num((srv.get("distance_m") or 0) / 1000, 2) if srv else "-",
+            _fmt_num(off.get("distance_points")), _fmt_num(_server_scoring(srv, "distance_points")),
+            _fmt_num(off.get("time_points")), _fmt_num(_server_scoring(srv, "time_points")),
+            _fmt_num(off.get("leading_points")), _fmt_num(_server_scoring(srv, "leading_points")),
+            _fmt_num(_server_scoring(srv, "lc"), 4),
+            _fmt_num(off.get("speed_kmh"), 2), _fmt_num(srv.get("speed_kmh"), 2),
+            srv.get("state", ""), x.get("rank_match"), x.get("score_match"),
+        ]
+        lines.append("\t".join("" if v is None else str(v) for v in values))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def print_comparison_table(comparison, server):
+    print("\nFULL RESULT TABLE")
+    print("  off/server columns are official vs our server result")
+    print(f"  {'off#':>4} {'srv#':>4} {'id':>5}  {'pilot':<24} "
+          f"{'score':>13} {'Δ':>6} {'dist km':>15} {'distP':>13} "
+          f"{'timeP':>13} {'leadP':>13} {'lc':>7} state")
+    for x, srv, off in comparison_rows_for_table(comparison, server):
+        name = (x.get("name") or "")[:24]
+        srv_dist = (srv.get("distance_m") or 0) / 1000 if srv else None
+        print(f"  {str(x.get('official_rank') or '-'):>4} {str(x.get('server_rank') or '-'):>4} "
+              f"{str(x.get('pilot_id') or '-'):>5}  {name:<24} "
+              f"{_fmt_num(x.get('official_score')):>6}/{_fmt_num(x.get('server_score')):<6} "
+              f"{_fmt_num(x.get('score_delta')):>6} "
+              f"{_fmt_num(off.get('distance_km'), 2):>7}/{_fmt_num(srv_dist, 2):<7} "
+              f"{_fmt_num(off.get('distance_points')):>6}/{_fmt_num(_server_scoring(srv, 'distance_points')):<6} "
+              f"{_fmt_num(off.get('time_points')):>6}/{_fmt_num(_server_scoring(srv, 'time_points')):<6} "
+              f"{_fmt_num(off.get('leading_points')):>6}/{_fmt_num(_server_scoring(srv, 'leading_points')):<6} "
+              f"{_fmt_num(_server_scoring(srv, 'lc'), 4):>7} {srv.get('state', '')}")
 
 
 def parse_scoring_parameters(page):
@@ -456,31 +575,8 @@ def main():
 
     if args.results_only:
         (run/"results.json").write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
-        ts = result.get("task_score") or {}
-        print(f"Task {task_id}: {len(rows)} pilots scored · accepted={accepted} duplicates={duplicates} "
-              f"· status={result.get('status')} scored_epoch={result.get('processed_epoch')}")
-        if ts:
-            print("  " + "  ".join(f"{k}={v:g}" if isinstance(v, (int, float)) else f"{k}={v}"
-                                   for k, v in sorted(ts.items())))
-        print(f"  {'rank':>4}  {'pilot':>6}  {'score':>7}  {'dist_km':>8}  "
-              f"{'dist_p':>7}  {'time_p':>7}  {'lead_p':>7}  {'lc':>6}  "
-              f"{'km/h':>6}  {'ess':>3} {'goal':>4}  state")
-        for r in sorted(rows, key=lambda z: (z.get("rank") is None, z.get("rank") or 0)):
-            speed = r.get("speed_kmh")
-            sc = r.get("scoring") or {}
-            num = lambda v: f"{float(v):.1f}" if v is not None else "-"
-            lc = sc.get("lc")
-            lc_text = f"{float(lc):.4f}" if lc is not None else "-"
-            print(f"  {str(r.get('rank') or '-'):>4}  {str(r.get('pilot_id')):>6}  "
-                  f"{float(r.get('score') or 0):>7.1f}  {float(r.get('distance_m') or 0)/1000:>8.2f}  "
-                  f"{num(sc.get('distance_points')):>7}  {num(sc.get('time_points')):>7}  "
-                  f"{num(sc.get('leading_points')):>7}  {lc_text:>6}  "
-                  f"{(f'{float(speed):.1f}' if speed else '-'):>6}  "
-                  f"{('Y' if r.get('ess') else '-'):>3} {('Y' if r.get('goal') else '-'):>4}  "
-                  f"{r.get('state','')}")
-        tot = lambda k: sum(float((p.get('scoring') or {}).get(k) or 0) for p in rows)
-        print(f"  {'':>4}  {'TOTAL':>6}  {sum(float(p.get('score') or 0) for p in rows):>7.1f}  {'':>8}  "
-              f"{tot('distance_points'):>7.1f}  {tot('time_points'):>7.1f}  {tot('leading_points'):>7.1f}")
+        print_server_table(rows, accepted=accepted, duplicates=duplicates,
+                           result=result, task_id=task_id)
         if latencies:
             q = sorted(latencies)
             print(f"HTTP performance: p50={q[len(q)//2]:.0f}ms p95={q[min(len(q)-1,int(len(q)*.95))]:.0f}ms max={q[-1]:.0f}ms")
@@ -503,6 +599,7 @@ def main():
         if actual is None:
             missing.append(pid)
             comparison.append({"pilot_id": pid, "name": expected["name"],
+                               "official": expected,
                                "official_rank": expected["rank"], "official_score": expected["score"],
                                "server_rank": None, "server_score": None,
                                "score_delta": None, "rank_match": False, "score_match": False,
@@ -513,6 +610,7 @@ def main():
         rank_match = int(actual.get("rank") or 0) == int(expected["rank"])
         score_match = abs(score_delta) <= args.score_tolerance
         comparison.append({"pilot_id": pid, "name": expected["name"],
+                           "official": expected,
                            "official_rank": expected["rank"], "official_score": expected["score"],
                            "server_rank": actual.get("rank"), "server_score": server_score,
                            "score_delta": round(score_delta, 4), "rank_match": rank_match,
@@ -523,6 +621,15 @@ def main():
     comparable_count = len(official) - len(unavailable)
     all_match = (not missing and not unexpected and len(comparison) == len(server)
                  and rank_matches == comparable_count and score_matches == comparable_count)
+    display_comparison = list(comparison)
+    for pid in unavailable:
+        expected = official[pid]
+        display_comparison.append({
+            "pilot_id": pid, "name": expected["name"], "official": expected,
+            "official_rank": expected["rank"], "official_score": expected["score"],
+            "server_rank": None, "server_score": None, "score_delta": None,
+            "rank_match": False, "score_match": False, "match": False,
+        })
     report={"event_id":event_id,"task_id":task_id,"task_url":meta["task_url"],"official_url":meta["task_url"],
             "accepted":accepted,"duplicates":duplicates,"http_ms":latencies,
             "wait_seconds":round(time.perf_counter() - wait_started, 3),
@@ -531,7 +638,7 @@ def main():
             "server_count":len(server),"official_without_igc":unavailable,
             "missing_on_server":missing,"unexpected_on_server":unexpected,
             "rank_matches":rank_matches,"score_matches":score_matches,"all_match":all_match,
-            "server_results":result,"comparison":comparison}
+            "server_results":result,"comparison":display_comparison}
     (run/"comparison.json").write_text(json.dumps(report,indent=2,ensure_ascii=False),encoding="utf-8")
     print(f"Final: {len(rows)} server rows; official={len(official)} "
           f"(comparable={comparable_count}, no IGC={len(unavailable)}); "
@@ -545,9 +652,13 @@ def main():
                   f"server rank {x['server_rank']} / {x['server_score']:.1f} · "
                   f"delta {x['score_delta']:+.1f} · "
                   f"{'OK' if x['match'] else 'DIFF'}")
+    table_path = run / "comparison.tsv"
+    write_comparison_tsv(table_path, display_comparison, server)
+    print_comparison_table(display_comparison, server)
     if latencies:
         q=sorted(latencies); print(f"HTTP performance: p50={q[len(q)//2]:.0f}ms p95={q[min(len(q)-1,int(len(q)*.95))]:.0f}ms max={q[-1]:.0f}ms")
     print(f"Report: {run/'comparison.json'}")
+    print(f"Table: {table_path}")
     return 0 if all_match or not args.fail_on_mismatch else 2
 
 if __name__ == "__main__": sys.exit(main())
