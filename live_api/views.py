@@ -267,10 +267,10 @@ def explain(request):
     event_id = request.GET.get("event_id")
     task_id = request.GET.get("task_id")
     pilot_id = request.GET.get("pilot_id")
-    if not event_id and not task_id:
-        return error("pass event_id, or task_id (optionally with pilot_id)", 400)
     if pilot_id and not task_id:
         return error("pilot_id needs a task_id: a pilot is explained per task", 400)
+    if not event_id and not task_id:
+        return error("pass event_id, or task_id (optionally with pilot_id)", 400)
 
     started = time.perf_counter()
     try:
